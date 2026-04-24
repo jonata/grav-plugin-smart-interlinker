@@ -1,0 +1,10 @@
+cache/*.json
+cache/*.log
+.claude/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

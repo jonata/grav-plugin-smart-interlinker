@@ -1,0 +1,6 @@
+enabled: true
+match_fields:
+  - summary
+  - category
+match_threshold: 70
+context_length: 80

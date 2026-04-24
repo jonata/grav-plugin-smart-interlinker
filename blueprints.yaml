@@ -1,0 +1,71 @@
+name: Smart Interlinker
+slug: smart-interlinker
+type: plugin
+version: 0.1.0
+description: SEO-driven internal linking assistant for the Grav page editor. Discover and insert internal links by reviewing scored, grouped phrase suggestions with surrounding context.
+icon: sitemap
+author:
+  name: jonata
+  email: jonata@jonata.org
+  url: https://github.com/jonata
+homepage: https://github.com/jonata/grav-plugin-smart-interlinker
+keywords: admin, editor, seo, interlink, internal-links, backlinks, content, linking
+bugs: https://github.com/jonata/grav-plugin-smart-interlinker/issues
+docs: https://github.com/jonata/grav-plugin-smart-interlinker/blob/main/README.md
+license: MIT
+
+dependencies:
+  - { name: grav, version: '>=1.7.0' }
+  - { name: admin, version: '>=1.10.0' }
+
+form:
+  validation: strict
+  fields:
+    enabled:
+      type: toggle
+      label: Plugin status
+      highlight: 1
+      default: 0
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool
+
+    match_fields:
+      type: selectize
+      label: Fields to match against
+      help: "Select which page front matter fields to include in backlink matching"
+      default:
+        - summary
+        - category
+      options:
+        title: Page Title
+        summary: Summary
+        category: Category
+        tags: Tags
+        keywords: Keywords
+
+    match_threshold:
+      type: range
+      label: Match confidence threshold (%)
+      help: "Minimum fuzzy match score (0-100). Higher = stricter matching"
+      default: 70
+      min: 0
+      max: 100
+      step: 5
+
+    context_length:
+      type: range
+      label: Context length (chars)
+      help: "Number of characters to show before and after the matched phrase"
+      default: 80
+      min: 20
+      max: 300
+      step: 10
+
+    rebuild_index:
+      type: button
+      classes: "btn btn-primary"
+      text: "Rebuild Index"
+      help: "Scan all published pages and rebuild the internal link index"
