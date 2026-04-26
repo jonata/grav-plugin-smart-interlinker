@@ -382,9 +382,18 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function tokenizeForPhrases($text)
     {
-        $text = preg_replace('/[^\p{L}\p{N}\-\s]+/u', ' ', $text);
+        // Preserve dots, hyphens, and underscores so version numbers like "6.1.4" stay intact;
+        // strip everything else (sentence punctuation, brackets, etc.) into spaces.
+        $text = preg_replace('/[^\p{L}\p{N}\.\-_\s]+/u', ' ', $text);
         $tokens = preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY);
-        return $tokens ?: [];
+        if (!$tokens) return [];
+        // Trim leading/trailing punctuation ("world." -> "world") but keep internal "6.1.4".
+        $out = [];
+        foreach ($tokens as $t) {
+            $t = trim($t, ".-_");
+            if ($t !== '') $out[] = $t;
+        }
+        return $out;
     }
 
     private function extractTitlePhrases($title, $minWords, $stopwords, $ignoredTerms)

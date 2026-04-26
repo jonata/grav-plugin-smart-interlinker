@@ -204,9 +204,10 @@
             const item = document.createElement('div');
             item.className = 'smart-interlinker-item';
 
+            const groupName = 'sil-target-' + Math.random().toString(36).slice(2, 10);
             const targetsHtml = group.targets.map((t, idx) =>
                 `<label class="match-target-option">
-                    <input type="radio" name="target-${escapeHtml(group.phrase)}-${Math.random().toString(36).slice(2,8)}" value="${escapeHtml(t.url)}"${idx === 0 ? ' checked' : ''}>
+                    <input type="radio" name="${groupName}" value="${escapeHtml(t.url)}"${idx === 0 ? ' checked' : ''}>
                     <span class="match-target-title">${escapeHtml(t.title)}</span>
                     <span class="match-target-score">${Math.round(t.score)}%</span>
                 </label>`
