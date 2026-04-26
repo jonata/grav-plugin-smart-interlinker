@@ -1,6 +1,6 @@
 enabled: true
-match_fields:
-  - summary
-  - category
-match_threshold: 70
+keyword_field: ''
+match_threshold: 0
+min_phrase_words: 2
+ignored_terms: []
 context_length: 80

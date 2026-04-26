@@ -66,14 +66,12 @@ class SmartInterlinkerPlugin extends Plugin
         $entry = [
             'url' => $page->route(),
             'title' => $page->title(),
-            'content' => substr(strip_tags($page->content()), 0, 1000),
         ];
 
-        $customFields = $this->config->get('plugins.smart-interlinker.match_fields') ?? [];
-        foreach ($customFields as $field) {
-            if ($page->header()->{$field} ?? null) {
-                $entry['field_' . $field] = $page->header()->{$field};
-            }
+        $keywordField = $this->config->get('plugins.smart-interlinker.keyword_field') ?? '';
+        if ($keywordField && ($page->header()->{$keywordField} ?? null)) {
+            $kw = $page->header()->{$keywordField};
+            $entry['keyword'] = is_array($kw) ? implode(' ', $kw) : (string)$kw;
         }
 
         $index[$page->route()] = $entry;
@@ -127,14 +125,14 @@ class SmartInterlinkerPlugin extends Plugin
             return;
         }
 
-        $customFields = $this->config->get('plugins.smart-interlinker.match_fields') ?? [];
+        $keywordField = $this->config->get('plugins.smart-interlinker.keyword_field') ?? '';
         $iter = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($pagesPath));
 
         foreach ($iter as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'md') {
                 continue;
             }
-            $entry = $this->parsePageFile($file->getPathname(), $pagesPath, $customFields);
+            $entry = $this->parsePageFile($file->getPathname(), $pagesPath, $keywordField);
             if ($entry && !empty($entry['url'])) {
                 $index[$entry['url']] = $entry;
             }
@@ -182,16 +180,14 @@ class SmartInterlinkerPlugin extends Plugin
         return $cached;
     }
 
-    private function parsePageFile($filePath, $pagesRoot, $customFields)
+    private function parsePageFile($filePath, $pagesRoot, $keywordField)
     {
         $raw = file_get_contents($filePath);
         if ($raw === false) return null;
 
         $header = [];
-        $body = $raw;
-        if (preg_match('/^---\s*\n(.*?)\n---\s*\n(.*)$/s', $raw, $m)) {
+        if (preg_match('/^---\s*\n(.*?)\n---\s*\n/s', $raw, $m)) {
             $header = $this->parseSimpleYaml($m[1]);
-            $body = $m[2];
         }
 
         if (isset($header['published']) && $header['published'] === false) return null;
@@ -215,13 +211,11 @@ class SmartInterlinkerPlugin extends Plugin
         $entry = [
             'url' => $route,
             'title' => $header['title'] ?? basename(dirname($filePath)),
-            'content' => substr(strip_tags($body), 0, 1000),
         ];
 
-        foreach ($customFields as $field) {
-            if (!empty($header[$field])) {
-                $entry['field_' . $field] = is_array($header[$field]) ? implode(' ', $header[$field]) : (string)$header[$field];
-            }
+        if ($keywordField && !empty($header[$keywordField])) {
+            $kw = $header[$keywordField];
+            $entry['keyword'] = is_array($kw) ? implode(' ', $kw) : (string)$kw;
         }
 
         return $entry;
@@ -231,13 +225,12 @@ class SmartInterlinkerPlugin extends Plugin
     {
         $content = $_POST['content'] ?? '';
         $currentRoute = $_POST['route'] ?? '';
-        $threshold = $this->config->get('plugins.smart-interlinker.match_threshold') ?? 70;
 
         if (empty($this->loadIndex())) {
             $this->buildFullIndex();
         }
 
-        $matches = $this->findInternalLinks($content, $currentRoute, $threshold);
+        $matches = $this->findInternalLinks($content, $currentRoute);
 
         header('Content-Type: application/json');
         echo json_encode(['matches' => $matches, 'index_size' => count($this->loadIndex())]);
@@ -258,55 +251,90 @@ class SmartInterlinkerPlugin extends Plugin
         exit;
     }
 
-    private function findInternalLinks($content, $currentRoute, $threshold)
+    private function findInternalLinks($sourceContent, $currentRoute)
     {
         $index = $this->loadIndex();
-        $grouped = [];
+        $threshold = (int)($this->config->get('plugins.smart-interlinker.match_threshold') ?? 70);
+        $minWords = max(1, (int)($this->config->get('plugins.smart-interlinker.min_phrase_words') ?? 2));
+        $ignoredTerms = $this->normalizeTermList($this->config->get('plugins.smart-interlinker.ignored_terms') ?? []);
+        $stopwords = $this->getStopwords();
 
-        $phrases = $this->extractPhrases($content);
-        $phrasesByLength = [];
-        foreach ($phrases as $phrase) {
-            $wordCount = substr_count(trim($phrase), ' ') + 1;
-            $phrasesByLength[$wordCount][] = $phrase;
-        }
-        krsort($phrasesByLength);
+        $sourceLc = mb_strtolower($this->stripMarkdown($sourceContent));
 
-        foreach ($phrasesByLength as $wordCount => $phraseList) {
-            foreach ($phraseList as $phrase) {
-                $seoBoost = min(20, ($wordCount - 1) * 10);
+        // Step 1: per target, find the single best matching phrase
+        $bestPerTarget = []; // route => ['phrase'=>..., 'word_count'=>..., 'score'=>..., 'title'=>...]
 
-                foreach ($index as $route => $entry) {
-                    if ($route === $currentRoute) continue;
+        foreach ($index as $route => $entry) {
+            if ($route === $currentRoute) continue;
+            if (empty($entry['title'])) continue;
 
-                    $baseScore = $this->fuzzyMatch($phrase, $entry, $threshold);
-                    if ($baseScore <= 0) continue;
+            $titleTokens = $this->tokenizeForPhrases($entry['title']);
+            $titleWordCount = max(1, count($titleTokens));
 
-                    $finalScore = min(100, $baseScore + $seoBoost);
-                    $key = mb_strtolower($phrase);
+            $phraseSources = [$entry['title']];
+            if (!empty($entry['keyword'])) {
+                $phraseSources[] = $entry['keyword'];
+            }
 
-                    if (!isset($grouped[$key])) {
-                        $grouped[$key] = [
-                            'phrase' => $phrase,
-                            'word_count' => $wordCount,
-                            'best_score' => $finalScore,
-                            'targets' => [],
-                        ];
-                    }
+            $allPhrases = [];
+            foreach ($phraseSources as $src) {
+                foreach ($this->extractTitlePhrases($src, $minWords, $stopwords, $ignoredTerms) as $p) {
+                    $allPhrases[mb_strtolower($p)] = $p;
+                }
+            }
 
-                    $grouped[$key]['targets'][$route] = [
-                        'url' => $route,
-                        'title' => $entry['title'],
-                        'score' => $finalScore,
-                    ];
-                    if ($finalScore > $grouped[$key]['best_score']) {
-                        $grouped[$key]['best_score'] = $finalScore;
+            foreach ($allPhrases as $phrase) {
+                if (!$this->phraseInSource($phrase, $sourceLc)) continue;
+
+                $phraseWords = substr_count($phrase, ' ') + 1;
+                $coverage = (int)round(($phraseWords / $titleWordCount) * 100);
+                $coverage = max(0, min(100, $coverage));
+
+                if ($coverage < $threshold) continue;
+
+                $candidate = [
+                    'phrase' => $phrase,
+                    'word_count' => $phraseWords,
+                    'score' => $coverage,
+                    'title' => $entry['title'],
+                ];
+
+                if (!isset($bestPerTarget[$route])) {
+                    $bestPerTarget[$route] = $candidate;
+                } else {
+                    $cur = $bestPerTarget[$route];
+                    if ($candidate['word_count'] > $cur['word_count']
+                        || ($candidate['word_count'] === $cur['word_count'] && $candidate['score'] > $cur['score'])) {
+                        $bestPerTarget[$route] = $candidate;
                     }
                 }
             }
         }
 
+        // Step 2: group by phrase. If multiple targets share the same best phrase,
+        // they appear as alternatives in the same row.
+        $grouped = [];
+        foreach ($bestPerTarget as $route => $best) {
+            $key = mb_strtolower($best['phrase']);
+            if (!isset($grouped[$key])) {
+                $grouped[$key] = [
+                    'phrase' => $best['phrase'],
+                    'word_count' => $best['word_count'],
+                    'best_score' => $best['score'],
+                    'targets' => [],
+                ];
+            }
+            $grouped[$key]['targets'][] = [
+                'url' => $route,
+                'title' => $best['title'],
+                'score' => $best['score'],
+            ];
+            if ($best['score'] > $grouped[$key]['best_score']) {
+                $grouped[$key]['best_score'] = $best['score'];
+            }
+        }
+
         foreach ($grouped as &$g) {
-            $g['targets'] = array_values($g['targets']);
             usort($g['targets'], fn($a, $b) => $b['score'] <=> $a['score']);
         }
         unset($g);
@@ -321,89 +349,82 @@ class SmartInterlinkerPlugin extends Plugin
         return array_slice(array_values($grouped), 0, 30);
     }
 
-    private function extractPhrases($content)
+    private function getStopwords()
     {
-        $minLength = 4;
-        $stopwords = [
+        return [
             'para', 'com', 'que', 'uma', 'por', 'dos', 'das', 'sobre', 'como', 'seus', 'suas', 'quando', 'onde', 'pelo', 'pela',
             'este', 'esta', 'esse', 'essa', 'isto', 'isso', 'aquele', 'aquela', 'mais', 'menos', 'muito', 'muita', 'mesmo', 'mesma',
             'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'been', 'were', 'will', 'would', 'could', 'should', 'their',
             'there', 'which', 'what', 'when', 'where', 'your', 'some', 'other', 'about', 'into', 'than', 'then', 'them', 'they',
         ];
+    }
 
+    private function normalizeTermList($terms)
+    {
+        if (is_string($terms)) {
+            $terms = preg_split('/[,\s]+/', $terms, -1, PREG_SPLIT_NO_EMPTY);
+        }
+        if (!is_array($terms)) return [];
+        $out = [];
+        foreach ($terms as $t) {
+            $t = trim((string)$t);
+            if ($t !== '') $out[] = mb_strtolower($t);
+        }
+        return $out;
+    }
+
+    private function tokenizeForPhrases($text)
+    {
+        $text = preg_replace('/[^\p{L}\p{N}\-\s]+/u', ' ', $text);
+        $tokens = preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY);
+        return $tokens ?: [];
+    }
+
+    private function extractTitlePhrases($title, $minWords, $stopwords, $ignoredTerms)
+    {
+        $tokens = $this->tokenizeForPhrases($title);
+        $count = count($tokens);
+        if ($count < $minWords) return [];
+
+        $maxN = min(6, $count);
+        $phrases = [];
+
+        for ($n = $maxN; $n >= $minWords; $n--) {
+            for ($i = 0; $i + $n <= $count; $i++) {
+                $slice = array_slice($tokens, $i, $n);
+                if ($this->isAllFiltered($slice, $stopwords, $ignoredTerms)) continue;
+                $phrases[] = implode(' ', $slice);
+            }
+        }
+
+        return array_values(array_unique($phrases));
+    }
+
+    private function isAllFiltered($words, $stopwords, $ignoredTerms)
+    {
+        foreach ($words as $w) {
+            $lc = mb_strtolower($w);
+            if (!in_array($lc, $stopwords) && !in_array($lc, $ignoredTerms)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function stripMarkdown($content)
+    {
         $content = preg_replace('/!\[[^\]]*\]\([^\)]*\)/', ' ', $content);
         $content = preg_replace('/\[([^\]]*)\]\([^\)]*\)/', '$1', $content);
         $content = preg_replace('/<!--.*?-->/s', ' ', $content);
         $content = preg_replace('/```.*?```/s', ' ', $content);
         $content = preg_replace('/`[^`]*`/', ' ', $content);
-        $content = preg_replace('/[#*_>~\|\[\]\(\)\{\}\"\'`]/', ' ', $content);
-        $content = strip_tags($content);
-
-        $words = preg_split('/[\s,;:.!?\/\\\\]+/u', $content, -1, PREG_SPLIT_NO_EMPTY);
-        $words = array_values(array_filter($words, fn($w) => mb_strlen($w) >= $minLength && preg_match('/^[\p{L}\p{N}-]+$/u', $w)));
-
-        $phrases = [];
-        $count = count($words);
-
-        for ($i = 0; $i < $count; $i++) {
-            $word = $words[$i];
-            $lcWord = mb_strtolower($word);
-
-            if (!in_array($lcWord, $stopwords) && mb_strlen($word) >= 5) {
-                $phrases[] = $word;
-            }
-            if ($i + 1 < $count) {
-                $bigram = $word . ' ' . $words[$i + 1];
-                $lcBigram = mb_strtolower($bigram);
-                if (!$this->isAllStopwords($lcBigram, $stopwords)) {
-                    $phrases[] = $bigram;
-                }
-            }
-            if ($i + 2 < $count) {
-                $trigram = $word . ' ' . $words[$i + 1] . ' ' . $words[$i + 2];
-                if (strlen($trigram) <= 60 && !$this->isAllStopwords(mb_strtolower($trigram), $stopwords)) {
-                    $phrases[] = $trigram;
-                }
-            }
-        }
-
-        return array_unique($phrases);
+        return $content;
     }
 
-    private function isAllStopwords($phrase, $stopwords)
+    private function phraseInSource($phrase, $sourceLc)
     {
-        $words = explode(' ', $phrase);
-        foreach ($words as $w) {
-            if (!in_array($w, $stopwords)) return false;
-        }
-        return true;
+        $phraseLc = mb_strtolower($phrase);
+        $pattern = '/(?<![\p{L}\p{N}])' . preg_quote($phraseLc, '/') . '(?![\p{L}\p{N}])/u';
+        return preg_match($pattern, $sourceLc) === 1;
     }
-
-    private function fuzzyMatch($phrase, $entry, $threshold)
-    {
-        $weights = [
-            'title' => 100,
-            'field' => 85,
-            'content' => 70,
-        ];
-
-        $maxScore = 0;
-
-        if (!empty($entry['title']) && stripos($entry['title'], $phrase) !== false) {
-            $maxScore = max($maxScore, $weights['title']);
-        }
-
-        foreach ($entry as $key => $value) {
-            if (strpos($key, 'field_') === 0 && is_string($value) && stripos($value, $phrase) !== false) {
-                $maxScore = max($maxScore, $weights['field']);
-            }
-        }
-
-        if (!empty($entry['content']) && stripos($entry['content'], $phrase) !== false) {
-            $maxScore = max($maxScore, $weights['content']);
-        }
-
-        return $maxScore >= $threshold ? $maxScore : 0;
-    }
-
 }

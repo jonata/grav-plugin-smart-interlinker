@@ -51,7 +51,7 @@
         }
 
         const content = editor.type === 'codemirror' ? editor.cm.getValue() : editor.el.value;
-        const currentRoute = document.querySelector('input[name="route"]')?.value || '/';
+        const currentRoute = deriveCurrentRoute();
 
         const btn = e.target;
         btn.style.pointerEvents = 'none';
@@ -90,6 +90,20 @@
             btn.style.opacity = '';
             btn.innerHTML = originalText;
         });
+    }
+
+    function deriveCurrentRoute() {
+        const fromInput = document.querySelector('input[name="route"]')?.value
+            || document.querySelector('input[name="data[route]"]')?.value;
+        if (fromInput) return fromInput.startsWith('/') ? fromInput : '/' + fromInput;
+
+        // Fall back to URL parsing: /admin/pages/<route>
+        const m = window.location.pathname.match(/\/admin\/pages\/(.+?)(?:\.json)?\/?$/);
+        if (m && m[1]) {
+            const slug = m[1].replace(/^\/+|\/+$/g, '');
+            return '/' + slug;
+        }
+        return '/';
     }
 
     function getEditor() {
@@ -139,12 +153,13 @@
         const list = document.createElement('div');
         list.className = 'smart-interlinker-list';
 
-        let threshold = 50;
+        const cfgInit = window.SmartInterlinkerConfig || {};
+        let threshold = Math.max(0, Math.min(100, parseInt(cfgInit.match_threshold) || 50));
         const thresholdSlider = document.createElement('div');
         thresholdSlider.className = 'smart-interlinker-threshold';
         thresholdSlider.innerHTML = `
-            <label>Filter by confidence: <span id="threshold-value">50</span>%</label>
-            <input type="range" id="threshold-slider" min="0" max="100" value="50">
+            <label>Filter by confidence: <span id="threshold-value">${threshold}</span>%</label>
+            <input type="range" id="threshold-slider" min="0" max="100" value="${threshold}">
         `;
 
         const slider = thresholdSlider.querySelector('#threshold-slider');

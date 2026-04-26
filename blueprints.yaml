@@ -32,25 +32,32 @@ form:
       validate:
         type: bool
 
-    match_fields:
-      type: selectize
-      label: Fields to match against
-      help: "Select which page front matter fields to include in backlink matching"
-      default:
-        - summary
-        - category
-      options:
-        title: Page Title
-        summary: Summary
-        category: Category
-        tags: Tags
-        keywords: Keywords
+    keyword_field:
+      type: text
+      label: Additional keyword field (optional)
+      help: "Front-matter field to treat as an extra source of link-target phrases (e.g. 'focus_keyword'). Leave empty to use the page title only."
+      default: ''
+
+    min_phrase_words:
+      type: range
+      label: Minimum phrase length (words)
+      help: "Skip target-title phrases shorter than this. 2 is the recommended default — single words generate too much noise."
+      default: 2
+      min: 1
+      max: 5
+      step: 1
+
+    ignored_terms:
+      type: array
+      label: Ignored terms
+      help: "Words to treat like stopwords for phrase generation. Add site-generic words (e.g. 'linux', 'tutorial') so phrases made entirely of these are skipped. One per row."
+      value_only: true
 
     match_threshold:
       type: range
-      label: Match confidence threshold (%)
-      help: "Minimum fuzzy match score (0-100). Higher = stricter matching"
-      default: 70
+      label: Backend confidence threshold (%)
+      help: "Server-side cutoff. Matches below this coverage are never returned. Leave at 0 to let the in-modal slider be the only filter."
+      default: 0
       min: 0
       max: 100
       step: 5
