@@ -1,3 +1,9 @@
+# v0.2.1
+## 2026-04-26
+
+1. [](#bugfix)
+    * Removed the unwired "Rebuild Index" button from the settings panel — Grav admin forms do not support `type: button`, so it was rendering as an unlabeled empty input. The index is rebuilt automatically when missing and via `onPageSave` / `onPageDelete` hooks.
+
 # v0.2.0
 ## 2026-04-25
 

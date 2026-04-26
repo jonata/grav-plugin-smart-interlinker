@@ -1,7 +1,7 @@
 name: Smart Interlinker
 slug: smart-interlinker
 type: plugin
-version: 0.2.0
+version: 0.2.1
 description: SEO-driven internal linking assistant for the Grav page editor. Discover and insert internal links by reviewing scored, grouped phrase suggestions with surrounding context.
 icon: sitemap
 author:
@@ -70,9 +70,3 @@ form:
       min: 20
       max: 300
       step: 10
-
-    rebuild_index:
-      type: button
-      classes: "btn btn-primary"
-      text: "Rebuild Index"
-      help: "Scan all published pages and rebuild the internal link index"
