@@ -1,7 +1,7 @@
 name: Smart Interlinker
 slug: smart-interlinker
 type: plugin
-version: 0.1.0
+version: 0.2.0
 description: SEO-driven internal linking assistant for the Grav page editor. Discover and insert internal links by reviewing scored, grouped phrase suggestions with surrounding context.
 icon: sitemap
 author:

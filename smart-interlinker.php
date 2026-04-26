@@ -180,6 +180,19 @@ class SmartInterlinkerPlugin extends Plugin
         return $cached;
     }
 
+    private function normalizeRoute($route)
+    {
+        if (!$route) return '/';
+        if ($route[0] !== '/') $route = '/' . $route;
+        $homePrefix = $this->getHomeRoute();
+        if ($homePrefix !== '' && strpos($route, $homePrefix . '/') === 0) {
+            $route = substr($route, strlen($homePrefix));
+        } elseif ($homePrefix !== '' && $route === $homePrefix) {
+            $route = '/';
+        }
+        return rtrim($route, '/') ?: '/';
+    }
+
     private function parsePageFile($filePath, $pagesRoot, $keywordField)
     {
         $raw = file_get_contents($filePath);
@@ -199,14 +212,7 @@ class SmartInterlinkerPlugin extends Plugin
             $p = preg_replace('/^\d+\./', '', $p);
             $route .= $p . '/';
         }
-        $route = rtrim($route, '/') ?: '/';
-
-        $homePrefix = $this->getHomeRoute();
-        if ($homePrefix !== '' && strpos($route, $homePrefix . '/') === 0) {
-            $route = substr($route, strlen($homePrefix));
-        } elseif ($homePrefix !== '' && $route === $homePrefix) {
-            $route = '/';
-        }
+        $route = $this->normalizeRoute($route);
 
         $entry = [
             'url' => $route,
@@ -260,12 +266,13 @@ class SmartInterlinkerPlugin extends Plugin
         $stopwords = $this->getStopwords();
 
         $sourceLc = mb_strtolower($this->stripMarkdown($sourceContent));
+        $currentRouteNorm = $this->normalizeRoute($currentRoute);
 
         // Step 1: per target, find the single best matching phrase
         $bestPerTarget = []; // route => ['phrase'=>..., 'word_count'=>..., 'score'=>..., 'title'=>...]
 
         foreach ($index as $route => $entry) {
-            if ($route === $currentRoute) continue;
+            if ($this->normalizeRoute($route) === $currentRouteNorm) continue;
             if (empty($entry['title'])) continue;
 
             $titleTokens = $this->tokenizeForPhrases($entry['title']);

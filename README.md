@@ -59,36 +59,41 @@ Admin → Plugins → Smart Interlinker exposes all settings graphically.
 | Setting | Default | Description |
 |---|---|---|
 | `enabled` | `true` | Master toggle |
-| `match_fields` | `[summary, category]` | Front-matter fields to include in matching alongside title + content |
-| `match_threshold` | `70` | Minimum confidence (0-100) for a candidate to be considered a match |
+| `keyword_field` | `''` | Optional front-matter field treated as an extra source of link-target phrases (e.g. `focus_keyword`). Empty = title only. |
+| `min_phrase_words` | `2` | Minimum length (in words) of title fragments to consider as link candidates. Drop to 1 only for sites with distinctive single-word titles. |
+| `ignored_terms` | `[]` | List of site-generic words to treat like stopwords (e.g. `linux`, `tutorial`). Phrases made entirely of these are skipped. |
+| `match_threshold` | `0` | Backend cutoff. Matches below this coverage are never returned. Leave at 0 to let the in-modal slider be the only filter. |
 | `context_length` | `80` | Characters of surrounding text shown before/after the matched phrase |
 
 ## How matching works
 
-### Phrase extraction
+The algorithm is **title-driven**: every suggestion's anchor text is guaranteed to come from the *target* page's own title (or its `keyword_field`). This eliminates phantom matches where source and target happen to share generic body-text phrases without being topically related.
 
-From the current page's markdown, the plugin strips images, fenced code, inline code, HTML comments, and markdown syntax, then splits on whitespace/punctuation. For every position it emits unigrams (≥5 chars, non-stopword), bigrams, and trigrams (≤60 chars). A Portuguese + English stopword list filters out phrases made entirely of filler words.
+### Phrase extraction (per indexed page)
 
-### Scoring
+For each indexed page, sliding-window n-grams are generated from the title (and optionally a configured `keyword_field`):
 
-Each candidate phrase is compared against every indexed page. Score depends on *where* the phrase was found:
+- Window size: `min_phrase_words` (default 2) up to 6 words
+- Phrases consisting entirely of stopwords or `ignored_terms` are dropped
+- A Portuguese + English stopword list is built in
 
-| Location | Base score |
-|---|---|
-| Page title | 100 |
-| Custom front-matter field | 85 |
-| Body content only | 70 |
+### Query (per page in the editor)
 
-An **SEO boost** is added to reward longer anchor text:
+The source content is stripped of markdown noise, then for each indexed page the plugin checks whether any of its title-phrases appears in the source (word-boundary, case-insensitive). When found, the match's confidence score is computed as:
 
-- Bigram match: +10
-- Trigram match: +20
+```
+coverage = (matched_phrase_word_count / target_title_word_count) × 100
+```
 
-The boosted score is capped at 100. Results are sorted by word count (trigrams first), then by score.
+So a 3-word match against a 3-word title scores 100; the same 3-word match against a 6-word title scores 50.
 
-### Grouping
+### Per-target dedup
 
-Results are grouped by unique phrase. If three different articles all match *"Shotcut 19.05"*, the modal shows one row for *"Shotcut 19.05"* with a list of the three candidate targets — pick one, click Accept.
+If multiple title-fragments of the same target appear in the source (e.g. *"Dolor Engine"*, *"the Dolor Engine"*, *"with the Dolor Engine"* all match the page *"Getting Started with the Dolor Engine"*), only the **longest** matching fragment is kept for that target. Each candidate page surfaces at most once.
+
+### Sorting + grouping
+
+Results are sorted by word count (longer fragments first), then by coverage. If two different pages happen to share the exact same best matching phrase, they appear as alternatives in the same row with a selectable target list.
 
 ## Index cache
 
