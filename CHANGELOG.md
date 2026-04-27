@@ -1,3 +1,22 @@
+# v0.2.2
+## 2026-04-27
+
+1. [](#new)
+    * **Phrase length slider** in the suggestions modal — drag to filter results by exact phrase length (1 to 6 words). Defaults to the configured `min_phrase_words`.
+    * Modal height is now fixed at 80vh so the sliders don't shift while you drag.
+2. [](#improved)
+    * Per-target dedup now subsumes only by overlap. Unrelated short matches in the same target's title (e.g. *Software* and *QEMU*) are both kept; only fragments contained inside a longer matching phrase are dropped.
+    * Backend always generates phrases from 1 word up; the `min_phrase_words` config is the slider's default value rather than a hard backend cutoff.
+    * Internal result cap raised from 30 → 500 so single-word matches aren't silently truncated.
+    * Stopword list expanded with Portuguese articles, prepositions, conjunctions, pronouns, and common short English words.
+    * Tokenizer preserves dots and underscores between alphanumerics — `6.1.4` is one token, *not* `6`, `1`, `4`.
+    * Suggestions inside markdown links, autolinks, HTML anchors, bare URLs, code blocks, and inline code are now ignored.
+    * Context preview lands on a real plain-text occurrence — never on a substring inside a longer word inside a markdown link.
+3. [](#bugfix)
+    * Self-suggestion exclusion fixed for pages nested under the home alias. The current page route is now derived from the URL (which always reflects the page being edited) instead of the form's first `data[route]` input (which is the parent route).
+    * Radio buttons inside a target group share the same `name` attribute, so picking a different target deselects the previous one.
+    * Pure-number 1-word phrases (`5.18`, `40`) no longer surface as standalone suggestions.
+
 # v0.2.1
 ## 2026-04-26
 
