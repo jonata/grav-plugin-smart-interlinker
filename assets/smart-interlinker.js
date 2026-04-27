@@ -181,11 +181,15 @@
         }
     }
 
-    function showModal(matches, editor, sourceContent) {
-        if (!matches || matches.length === 0) {
+    function showModal(initialMatches, editor, initialSource) {
+        if (!initialMatches || initialMatches.length === 0) {
             showToast('No link suggestions found', 'info');
             return;
         }
+
+        // Mutable so we can refresh after each Accept.
+        let matches = initialMatches;
+        let sourceContent = initialSource;
 
         const modal = document.createElement('div');
         modal.className = 'smart-interlinker-modal-overlay';
@@ -224,14 +228,14 @@
         filters.querySelector('#sil-threshold-slider').addEventListener('input', (e) => {
             threshold = parseInt(e.target.value);
             document.getElementById('sil-threshold-value').textContent = threshold;
-            updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
+            renderMatches();
         });
 
         filters.querySelector('#sil-minwords-slider').addEventListener('input', (e) => {
             minWords = parseInt(e.target.value);
             document.getElementById('sil-minwords-value').textContent = minWords;
             document.getElementById('sil-minwords-unit').textContent = 'word' + (minWords === 1 ? '' : 's');
-            updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
+            renderMatches();
         });
 
         list.appendChild(filters);
@@ -241,7 +245,46 @@
         matchesContainer.id = 'matches-container';
         list.appendChild(matchesContainer);
 
-        updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
+        // Render fn closes over the current matches/sourceContent so refresh can update them.
+        const renderMatches = () => {
+            updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent, refreshAfterAccept);
+        };
+
+        // Refetch suggestions from the backend with the latest editor content. Used after
+        // an Accept so that suggestions overlapping the just-inserted link disappear.
+        const refreshAfterAccept = () => {
+            matchesContainer.classList.add('refreshing');
+            const newContent = editor.type === 'codemirror' ? editor.cm.getValue() : editor.el.value;
+            sourceContent = newContent;
+            const route = deriveCurrentRoute();
+            return fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({
+                    'task': 'smart-interlinker.analyze',
+                    'content': newContent,
+                    'route': route,
+                    'admin-nonce': document.querySelector('input[name="admin-nonce"]')?.value || ''
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                matches = data.matches || [];
+                renderMatches();
+            })
+            .catch(err => {
+                console.error(err);
+                showToast('Refresh failed', 'error');
+            })
+            .finally(() => {
+                matchesContainer.classList.remove('refreshing');
+            });
+        };
+
+        renderMatches();
 
         content.appendChild(header);
         content.appendChild(list);
@@ -256,7 +299,7 @@
         });
     }
 
-    function updateMatchesList(groups, container, threshold, exactWords, editor, sourceContent) {
+    function updateMatchesList(groups, container, threshold, exactWords, editor, sourceContent, onAccepted) {
         const filtered = groups.filter(g => g.best_score >= threshold && g.word_count === exactWords);
         container.innerHTML = '';
 
@@ -303,6 +346,10 @@
                 const ok = insertLink(editor, group.phrase, url);
                 if (ok) {
                     showToast('Link inserted', 'success');
+                    if (typeof onAccepted === 'function') {
+                        onAccepted();
+                        return;
+                    }
                 } else {
                     showToast('Phrase no longer found in content', 'error');
                 }
@@ -323,19 +370,24 @@
     }
 
     function insertLink(editor, phrase, url) {
-        const link = `[${phrase}](${url})`;
-        const regex = new RegExp(escapeRegex(phrase), '');
+        const escaped = escapeRegex(phrase);
+        // Case-insensitive + word-bounded so we match the same occurrence the backend
+        // found, regardless of casing differences between the title-derived phrase and
+        // the source text. Wrap the actually-matched text (preserving its original
+        // case) in the markdown link so the editor's content keeps its capitalization.
+        const regex = new RegExp('(?<![\\p{L}\\p{N}])' + escaped + '(?![\\p{L}\\p{N}])', 'iu');
+        const wrap = (m) => `[${m}](${url})`;
 
         if (editor.type === 'codemirror') {
             const doc = editor.cm.getDoc();
             const content = doc.getValue();
             if (!regex.test(content)) return false;
-            doc.setValue(content.replace(regex, link));
+            doc.setValue(content.replace(regex, wrap));
             return true;
         } else {
             const content = editor.el.value;
             if (!regex.test(content)) return false;
-            editor.el.value = content.replace(regex, link);
+            editor.el.value = content.replace(regex, wrap);
             editor.el.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
         }
