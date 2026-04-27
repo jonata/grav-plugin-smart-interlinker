@@ -53,11 +53,18 @@
         const content = editor.type === 'codemirror' ? editor.cm.getValue() : editor.el.value;
         const currentRoute = deriveCurrentRoute();
 
-        const btn = e.target;
+        const btn = e.target.closest('.smart-interlinker-button') || e.target;
+        const icon = btn.querySelector('i');
+        const originalIconClass = icon ? icon.className : '';
         btn.style.pointerEvents = 'none';
         btn.style.opacity = '0.6';
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '⏳ Analyzing...';
+        if (icon) icon.className = 'fa fa-fw fa-circle-o-notch fa-spin';
+
+        const restore = () => {
+            btn.style.pointerEvents = '';
+            btn.style.opacity = '';
+            if (icon) icon.className = originalIconClass;
+        };
 
         fetch(window.location.href, {
             method: 'POST',
@@ -74,9 +81,7 @@
         })
         .then(r => r.json())
         .then(data => {
-            btn.style.pointerEvents = '';
-            btn.style.opacity = '';
-            btn.innerHTML = originalText;
+            restore();
             if (!data.matches || data.matches.length === 0) {
                 showToast('No link suggestions found (index size: ' + (data.index_size || 0) + ')', 'info');
                 return;
@@ -86,9 +91,7 @@
         .catch(err => {
             console.error(err);
             showToast('Error analyzing internal links', 'error');
-            btn.style.pointerEvents = '';
-            btn.style.opacity = '';
-            btn.innerHTML = originalText;
+            restore();
         });
     }
 
@@ -137,6 +140,8 @@
         // (markdown links, bare URLs, code, etc.) — matches the backend's stripMarkdown.
         const skipZones = [];
         const collectors = [
+            /^[ \t]{0,3}#{1,6}[ \t]+.*$/gm,    // ATX heading line
+            /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi, // HTML heading
             /!?\[[^\]]*\]\([^\)]*\)/g,         // markdown image/link
             /\[[^\]]*\]\[[^\]]*\]/g,           // reference link
             /<https?:\/\/[^>]+>/gi,            // autolink

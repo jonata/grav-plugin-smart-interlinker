@@ -1,3 +1,11 @@
+# v0.2.3
+## 2026-04-27
+
+1. [](#improved)
+    * Source content is now tokenized with the same rules as target titles before phrase lookup. Compound tokens like `22.3`, `RISC-V`, `5.18`, `front-end` stay atomic on both sides — a phrase only matches when it appears as a contiguous sequence of *whole* tokens. Fixes false positives like "Linux Mint 22" matching inside "Linux Mint 22.3".
+    * Markdown headings (`#`, `##`, `###` … `######`), Setext headings (text + `===` / `---` underline), and HTML `<h1>`–`<h6>` blocks are stripped from the source before matching. Phrases that only appear inside a heading are no longer suggested. The in-modal context preview also skips heading content.
+    * Toolbar button shows a spinning icon (`fa-circle-o-notch fa-spin`) during analysis instead of the text "Analyzing…", preserving the compact icon-only toolbar layout.
+
 # v0.2.2
 ## 2026-04-27
 

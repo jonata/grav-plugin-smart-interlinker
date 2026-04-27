@@ -268,7 +268,12 @@ class SmartInterlinkerPlugin extends Plugin
         $ignoredTerms = $this->normalizeTermList($this->config->get('plugins.smart-interlinker.ignored_terms') ?? []);
         $stopwords = $this->getStopwords();
 
-        $sourceLc = mb_strtolower($this->stripMarkdown($sourceContent));
+        // Tokenize the source the same way titles are tokenized so that compound tokens
+        // like "22.3", "RISC-V" stay intact. Then phrase lookup is a simple bounded-by-
+        // space substring against the joined token stream.
+        $sourceClean = $this->stripMarkdown($sourceContent);
+        $sourceTokens = $this->tokenizeForPhrases(mb_strtolower($sourceClean));
+        $sourceJoined = ' ' . implode(' ', $sourceTokens) . ' ';
         $currentRouteNorm = $this->normalizeRoute($currentRoute);
 
         // Step 1: per target, collect every matching phrase (with coverage score).
@@ -295,7 +300,7 @@ class SmartInterlinkerPlugin extends Plugin
 
             $hits = [];
             foreach ($allPhrases as $phrase) {
-                if (!$this->phraseInSource($phrase, $sourceLc)) continue;
+                if (!$this->phraseInSource($phrase, $sourceJoined)) continue;
 
                 $phraseWords = substr_count($phrase, ' ') + 1;
                 $coverage = (int)round(($phraseWords / $titleWordCount) * 100);
@@ -482,6 +487,13 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function stripMarkdown($content)
     {
+        // Markdown ATX headings (# H1 ... ###### H6): strip the whole line. Headings are
+        // structural and the editor's own labels — suggestions inside them are awkward.
+        $content = preg_replace('/^[ \t]{0,3}#{1,6}[ \t]+.*$/m', ' ', $content);
+        // Setext headings: a line of text followed by === or --- on the next line.
+        $content = preg_replace('/^[ \t]*[^\n]+\n[ \t]*(={3,}|-{3,})[ \t]*$/m', ' ', $content);
+        // HTML headings: <h1>..</h1> through <h6>..</h6>
+        $content = preg_replace('/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/i', ' ', $content);
         // Images: drop entirely
         $content = preg_replace('/!\[[^\]]*\]\([^\)]*\)/', ' ', $content);
         // Markdown links: drop the entire [text](url) block — text inside an existing
@@ -506,11 +518,17 @@ class SmartInterlinkerPlugin extends Plugin
         return $content;
     }
 
-    private function phraseInSource($phrase, $sourceLc)
+    /**
+     * Check whether the phrase appears in the source as a sequence of whole tokens.
+     * $sourceJoined is the source already tokenized by tokenizeForPhrases() and joined
+     * with single spaces, with a leading and trailing space so first/last tokens still
+     * have boundary delimiters. Looking up " phrase " then guarantees a whole-word match
+     * across the entire phrase.
+     */
+    private function phraseInSource($phrase, $sourceJoined)
     {
-        $phraseLc = mb_strtolower($phrase);
-        $pattern = '/(?<![\p{L}\p{N}])' . preg_quote($phraseLc, '/') . '(?![\p{L}\p{N}])/u';
-        return preg_match($pattern, $sourceLc) === 1;
+        $needle = ' ' . mb_strtolower($phrase) . ' ';
+        return strpos($sourceJoined, $needle) !== false;
     }
 
     /**
