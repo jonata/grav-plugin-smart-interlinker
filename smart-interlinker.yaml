@@ -1,6 +1,7 @@
 enabled: true
-keyword_field: ''
+keyword_fields: []
 match_threshold: 0
 min_phrase_words: 2
 ignored_terms: []
 context_length: 80
+taxonomy_routes: {}

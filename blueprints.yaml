@@ -32,11 +32,25 @@ form:
       validate:
         type: bool
 
-    keyword_field:
-      type: text
-      label: Additional keyword field (optional)
-      help: "Front-matter field to treat as an extra source of link-target phrases (e.g. 'focus_keyword'). Leave empty to use the page title only."
-      default: ''
+    keyword_fields:
+      type: selectize
+      size: large
+      label: Additional keyword fields (optional)
+      help: "Pick (or type) front-matter field names to treat as extra sources of link-target phrases. Phrases generated from these fields are matched against the source content the same way titles are. Leave empty to use the page title only."
+      classes: fancy
+      selectize:
+        create: true
+        plugins:
+          - remove_button
+      default: []
+      options:
+        focus_keyword: focus_keyword
+        keywords: keywords
+        seo_title: seo_title
+        meta_title: meta_title
+        meta_description: meta_description
+        aliases: aliases
+        tags: tags
 
     min_phrase_words:
       type: range
@@ -70,3 +84,11 @@ form:
       min: 20
       max: 300
       step: 10
+
+    taxonomy_routes:
+      type: array
+      label: Taxonomy routes
+      help: |
+        Map taxonomy keys (left) to URL templates (right) to surface taxonomy listings as link suggestions. Use {value} as the placeholder for the taxonomy value (URL-encoded automatically). Example — distro → /artigos/distro:{value} produces /artigos/distro:Ubuntu when an article tagged distro: Ubuntu is found.
+      placeholder_key: 'taxonomy key (e.g. distro)'
+      placeholder_value: 'URL template with {value}'

@@ -1,5 +1,6 @@
 (function() {
     'use strict';
+    // taxonomy-rendering v1
 
     function initButton() {
         const editorContainer = document.querySelector('.grav-editor');
@@ -19,13 +20,20 @@
         return true;
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    function startObservingForButton() {
         if (initButton()) return;
         const observer = new MutationObserver(() => {
             if (initButton()) observer.disconnect();
         });
         observer.observe(document.body, { childList: true, subtree: true });
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startObservingForButton);
+    } else {
+        // Script was inlined after DOMContentLoaded — start observing immediately.
+        startObservingForButton();
+    }
 
     function showToast(message, type) {
         const existing = document.querySelector('.smart-interlinker-toast');
@@ -300,7 +308,16 @@
     }
 
     function updateMatchesList(groups, container, threshold, exactWords, editor, sourceContent, onAccepted) {
-        const filtered = groups.filter(g => g.best_score >= threshold && g.word_count === exactWords);
+        // A group passes the confidence filter if its best_score is at or above threshold.
+        // It passes the phrase-length filter if either its word_count matches the slider
+        // OR it contains at least one taxonomy target — taxonomy targets bypass the
+        // exact-word filter so single-word values like "Ubuntu" surface even when the
+        // editor has the slider set to 2+.
+        const filtered = groups.filter(g => {
+            if (g.best_score < threshold) return false;
+            if (g.word_count === exactWords) return true;
+            return Array.isArray(g.targets) && g.targets.some(t => t.type === 'taxonomy');
+        });
         container.innerHTML = '';
 
         if (filtered.length === 0) {
@@ -313,19 +330,30 @@
             item.className = 'smart-interlinker-item';
 
             const groupName = 'sil-target-' + Math.random().toString(36).slice(2, 10);
-            const targetsHtml = group.targets.map((t, idx) =>
-                `<label class="match-target-option">
+            const initialLimit = 10;
+            const totalTargets = group.targets.length;
+            const targetsHtml = group.targets.map((t, idx) => {
+                const isTax = t.type === 'taxonomy';
+                const badge = isTax
+                    ? `<span class="match-target-badge" title="taxonomy: ${escapeHtml(t.taxonomy_key || '')}"><i class="fa fa-tag"></i> ${escapeHtml(t.taxonomy_key || 'tag')}</span>`
+                    : '';
+                const hidden = idx >= initialLimit ? ' is-hidden' : '';
+                return `<label class="match-target-option${isTax ? ' is-taxonomy' : ''}${hidden}">
                     <input type="radio" name="${groupName}" value="${escapeHtml(t.url)}"${idx === 0 ? ' checked' : ''}>
+                    ${badge}
                     <span class="match-target-title">${escapeHtml(t.title)}</span>
                     <span class="match-target-score">${Math.round(t.score)}%</span>
-                </label>`
-            ).join('');
+                </label>`;
+            }).join('');
+            const showMoreHtml = totalTargets > initialLimit
+                ? `<button type="button" class="match-show-more">Show ${totalTargets - initialLimit} more</button>`
+                : '';
 
             const cfg = window.SmartInterlinkerConfig || {};
             const context = buildContextSnippet(sourceContent, group.phrase, cfg.context_length || 80);
             item.innerHTML = `
                 ${context ? `<div class="match-context">${context}</div>` : ''}
-                <div class="match-target-list">${targetsHtml}</div>
+                <div class="match-target-list">${targetsHtml}${showMoreHtml}</div>
                 <div class="match-actions">
                     <div class="match-meta">
                         <span class="match-wc">${group.word_count}-word</span>
@@ -338,6 +366,15 @@
                     </div>
                 </div>
             `;
+
+            const showMoreBtn = item.querySelector('.match-show-more');
+            if (showMoreBtn) {
+                showMoreBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    item.querySelectorAll('.match-target-option.is-hidden').forEach(el => el.classList.remove('is-hidden'));
+                    showMoreBtn.remove();
+                });
+            }
 
             const getSelected = () => item.querySelector('input[type="radio"]:checked')?.value;
             item.querySelector('.accept-btn').addEventListener('click', () => {

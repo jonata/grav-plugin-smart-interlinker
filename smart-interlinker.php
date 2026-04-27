@@ -59,6 +59,31 @@ class SmartInterlinkerPlugin extends Plugin
         }
     }
 
+    /**
+     * Resolve the configured keyword fields into a normalized array of field names.
+     * Supports the new array setting `keyword_fields`, the legacy single-string
+     * `keyword_field`, comma-separated strings, and trims/dedupes the result.
+     */
+    private function getKeywordFields()
+    {
+        $raw = $this->config->get('plugins.smart-interlinker.keyword_fields');
+        if ($raw === null || $raw === '' || $raw === []) {
+            // Backwards-compat with the pre-array name.
+            $raw = $this->config->get('plugins.smart-interlinker.keyword_field');
+        }
+        if ($raw === null || $raw === '' || $raw === []) return [];
+        if (is_string($raw)) {
+            $raw = preg_split('/[,\s]+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+        }
+        if (!is_array($raw)) return [];
+        $out = [];
+        foreach ($raw as $name) {
+            $name = trim((string)$name);
+            if ($name !== '' && !in_array($name, $out, true)) $out[] = $name;
+        }
+        return $out;
+    }
+
     private function updateIndexForPage($page)
     {
         $index = $this->loadIndex();
@@ -68,10 +93,14 @@ class SmartInterlinkerPlugin extends Plugin
             'title' => $page->title(),
         ];
 
-        $keywordField = $this->config->get('plugins.smart-interlinker.keyword_field') ?? '';
-        if ($keywordField && ($page->header()->{$keywordField} ?? null)) {
-            $kw = $page->header()->{$keywordField};
-            $entry['keyword'] = is_array($kw) ? implode(' ', $kw) : (string)$kw;
+        $keywords = [];
+        foreach ($this->getKeywordFields() as $field) {
+            $val = $page->header()->{$field} ?? null;
+            if ($val === null || $val === '') continue;
+            $keywords[] = is_array($val) ? implode(' ', $val) : (string)$val;
+        }
+        if ($keywords) {
+            $entry['keywords'] = $keywords;
         }
 
         $index[$page->route()] = $entry;
@@ -125,14 +154,14 @@ class SmartInterlinkerPlugin extends Plugin
             return;
         }
 
-        $keywordField = $this->config->get('plugins.smart-interlinker.keyword_field') ?? '';
+        $keywordFields = $this->getKeywordFields();
         $iter = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($pagesPath));
 
         foreach ($iter as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'md') {
                 continue;
             }
-            $entry = $this->parsePageFile($file->getPathname(), $pagesPath, $keywordField);
+            $entry = $this->parsePageFile($file->getPathname(), $pagesPath, $keywordFields);
             if ($entry && !empty($entry['url'])) {
                 $index[$entry['url']] = $entry;
             }
@@ -143,6 +172,18 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function parseSimpleYaml($yaml)
     {
+        // Prefer Symfony YAML (bundled with Grav) — it handles nested structures like
+        // taxonomy: { distro: [Ubuntu], assunto: [notícia] } correctly.
+        if (class_exists('\\Symfony\\Component\\Yaml\\Yaml')) {
+            try {
+                $parsed = \Symfony\Component\Yaml\Yaml::parse($yaml);
+                if (is_array($parsed)) return $parsed;
+            } catch (\Exception $e) {
+                // Fall through to the manual parser.
+            }
+        }
+
+        // Fallback: handles flat scalars and one-level lists.
         $result = [];
         $lines = explode("\n", $yaml);
         $currentKey = null;
@@ -193,7 +234,7 @@ class SmartInterlinkerPlugin extends Plugin
         return rtrim($route, '/') ?: '/';
     }
 
-    private function parsePageFile($filePath, $pagesRoot, $keywordField)
+    private function parsePageFile($filePath, $pagesRoot, $keywordFields)
     {
         $raw = file_get_contents($filePath);
         if ($raw === false) return null;
@@ -219,9 +260,30 @@ class SmartInterlinkerPlugin extends Plugin
             'title' => $header['title'] ?? basename(dirname($filePath)),
         ];
 
-        if ($keywordField && !empty($header[$keywordField])) {
-            $kw = $header[$keywordField];
-            $entry['keyword'] = is_array($kw) ? implode(' ', $kw) : (string)$kw;
+        $keywords = [];
+        foreach ((array)$keywordFields as $field) {
+            if (empty($header[$field])) continue;
+            $val = $header[$field];
+            $keywords[] = is_array($val) ? implode(' ', $val) : (string)$val;
+        }
+        if ($keywords) {
+            $entry['keywords'] = $keywords;
+        }
+
+        // Capture taxonomies for the virtual-targets pass during indexing.
+        if (!empty($header['taxonomy']) && is_array($header['taxonomy'])) {
+            $tax = [];
+            foreach ($header['taxonomy'] as $taxKey => $taxValues) {
+                if (!is_string($taxKey)) continue;
+                if (!is_array($taxValues)) $taxValues = [(string)$taxValues];
+                $clean = [];
+                foreach ($taxValues as $v) {
+                    $v = trim((string)$v);
+                    if ($v !== '') $clean[] = $v;
+                }
+                if ($clean) $tax[$taxKey] = $clean;
+            }
+            if ($tax) $entry['taxonomy'] = $tax;
         }
 
         return $entry;
@@ -287,7 +349,12 @@ class SmartInterlinkerPlugin extends Plugin
             $titleWordCount = max(1, count($titleTokens));
 
             $phraseSources = [$entry['title']];
-            if (!empty($entry['keyword'])) {
+            // New: array of keyword-field values; legacy: single 'keyword' string.
+            if (!empty($entry['keywords']) && is_array($entry['keywords'])) {
+                foreach ($entry['keywords'] as $kw) {
+                    if ($kw) $phraseSources[] = $kw;
+                }
+            } elseif (!empty($entry['keyword'])) {
                 $phraseSources[] = $entry['keyword'];
             }
 
@@ -312,7 +379,64 @@ class SmartInterlinkerPlugin extends Plugin
             }
 
             if ($hits) {
-                $matchesPerTarget[$route] = ['title' => $entry['title'], 'phrases' => $hits];
+                $matchesPerTarget[$route] = [
+                    'title' => $entry['title'],
+                    'phrases' => $hits,
+                    'type' => 'page',
+                ];
+            }
+        }
+
+        // Virtual taxonomy targets: each unique (key, value) pair across the index becomes
+        // a candidate whose "title" is the value itself. The URL comes from the per-key
+        // pattern in plugins.smart-interlinker.taxonomy_routes.
+        $taxonomyRoutes = $this->config->get('plugins.smart-interlinker.taxonomy_routes') ?? [];
+        if (is_array($taxonomyRoutes) && $taxonomyRoutes) {
+            $taxonomyValues = [];
+            foreach ($index as $entry) {
+                if (empty($entry['taxonomy']) || !is_array($entry['taxonomy'])) continue;
+                foreach ($entry['taxonomy'] as $k => $values) {
+                    if (!isset($taxonomyRoutes[$k]) || !is_array($values)) continue;
+                    foreach ($values as $v) {
+                        $v = trim((string)$v);
+                        if ($v !== '') $taxonomyValues[$k][$v] = true;
+                    }
+                }
+            }
+
+            foreach ($taxonomyValues as $taxKey => $valueSet) {
+                $template = (string)$taxonomyRoutes[$taxKey];
+                if ($template === '') continue;
+
+                foreach (array_keys($valueSet) as $value) {
+                    $url = str_replace('{value}', rawurlencode($value), $template);
+                    if ($this->normalizeRoute($url) === $currentRouteNorm) continue;
+                    if (isset($matchesPerTarget[$url])) continue;
+
+                    $valueTokens = $this->tokenizeForPhrases($value);
+                    $valueWordCount = max(1, count($valueTokens));
+
+                    $phrases = $this->extractTitlePhrases($value, 1, $stopwords, $ignoredTerms);
+
+                    $hits = [];
+                    foreach ($phrases as $phrase) {
+                        if (!$this->phraseInSource($phrase, $sourceJoined)) continue;
+                        $phraseWords = substr_count($phrase, ' ') + 1;
+                        $coverage = (int)round(($phraseWords / $valueWordCount) * 100);
+                        $coverage = max(0, min(100, $coverage));
+                        if ($coverage < $threshold) continue;
+                        $hits[$phrase] = ['word_count' => $phraseWords, 'score' => $coverage];
+                    }
+
+                    if ($hits) {
+                        $matchesPerTarget[$url] = [
+                            'title' => $value,
+                            'phrases' => $hits,
+                            'type' => 'taxonomy',
+                            'taxonomy_key' => $taxKey,
+                        ];
+                    }
+                }
             }
         }
 
@@ -350,11 +474,16 @@ class SmartInterlinkerPlugin extends Plugin
                         'targets' => [],
                     ];
                 }
-                $grouped[$key]['targets'][] = [
+                $target = [
                     'url' => $route,
                     'title' => $bucket['title'],
                     'score' => $info['score'],
+                    'type' => $bucket['type'] ?? 'page',
                 ];
+                if (!empty($bucket['taxonomy_key'])) {
+                    $target['taxonomy_key'] = $bucket['taxonomy_key'];
+                }
+                $grouped[$key]['targets'][] = $target;
                 if ($info['score'] > $grouped[$key]['best_score']) {
                     $grouped[$key]['best_score'] = $info['score'];
                 }
