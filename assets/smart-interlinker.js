@@ -147,9 +147,13 @@
         // Build skip-zones: regions where a phrase occurrence should NOT be highlighted
         // (markdown links, bare URLs, code, etc.) — matches the backend's stripMarkdown.
         const skipZones = [];
+        const cfg = window.SmartInterlinkerConfig || {};
+        const skipHeadings = cfg.skip_headings !== false;
         const collectors = [
-            /^[ \t]{0,3}#{1,6}[ \t]+.*$/gm,    // ATX heading line
-            /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi, // HTML heading
+            ...(skipHeadings ? [
+                /^[ \t]{0,3}#{1,6}[ \t]+.*$/gm,        // ATX heading line
+                /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi, // HTML heading
+            ] : []),
             /!?\[[^\]]*\]\([^\)]*\)/g,         // markdown image/link
             /\[[^\]]*\]\[[^\]]*\]/g,           // reference link
             /<https?:\/\/[^>]+>/gi,            // autolink

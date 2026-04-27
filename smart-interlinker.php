@@ -52,6 +52,8 @@ class SmartInterlinkerPlugin extends Plugin
             $clientConfig = [
                 'context_length' => (int)($config['context_length'] ?? 80),
                 'match_threshold' => (int)($config['match_threshold'] ?? 70),
+                'min_phrase_words' => (int)($config['min_phrase_words'] ?? 2),
+                'skip_headings' => $this->shouldSkipHeadings(),
             ];
             $this->grav['assets']->addInlineJs('window.SmartInterlinkerConfig = ' . json_encode($clientConfig) . ';');
             $this->grav['assets']->addJs('plugin://smart-interlinker/assets/smart-interlinker.js');
@@ -614,15 +616,24 @@ class SmartInterlinkerPlugin extends Plugin
         return true;
     }
 
+    private function shouldSkipHeadings()
+    {
+        $val = $this->config->get('plugins.smart-interlinker.skip_headings', true);
+        return filter_var($val, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? (bool)$val;
+    }
+
     private function stripMarkdown($content)
     {
-        // Markdown ATX headings (# H1 ... ###### H6): strip the whole line. Headings are
-        // structural and the editor's own labels — suggestions inside them are awkward.
-        $content = preg_replace('/^[ \t]{0,3}#{1,6}[ \t]+.*$/m', ' ', $content);
-        // Setext headings: a line of text followed by === or --- on the next line.
-        $content = preg_replace('/^[ \t]*[^\n]+\n[ \t]*(={3,}|-{3,})[ \t]*$/m', ' ', $content);
-        // HTML headings: <h1>..</h1> through <h6>..</h6>
-        $content = preg_replace('/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/i', ' ', $content);
+        if ($this->shouldSkipHeadings()) {
+            // Markdown ATX headings (# H1 ... ###### H6): strip the whole line. Headings
+            // are structural and the editor's own labels — suggestions inside them are
+            // awkward. Disable via plugins.smart-interlinker.skip_headings = false.
+            $content = preg_replace('/^[ \t]{0,3}#{1,6}[ \t]+.*$/m', ' ', $content);
+            // Setext headings: a line of text followed by === or --- on the next line.
+            $content = preg_replace('/^[ \t]*[^\n]+\n[ \t]*(={3,}|-{3,})[ \t]*$/m', ' ', $content);
+            // HTML headings: <h1>..</h1> through <h6>..</h6>
+            $content = preg_replace('/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/i', ' ', $content);
+        }
         // Images: drop entirely
         $content = preg_replace('/!\[[^\]]*\]\([^\)]*\)/', ' ', $content);
         // Markdown links: drop the entire [text](url) block — text inside an existing

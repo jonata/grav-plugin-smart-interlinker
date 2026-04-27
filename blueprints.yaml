@@ -85,6 +85,18 @@ form:
       max: 300
       step: 10
 
+    skip_headings:
+      type: toggle
+      label: Skip Markdown headings
+      help: "When enabled, phrases that only appear inside Markdown headings (#, ##, ###...) are excluded from suggestions. Disable this if you want to receive link suggestions for words that appear inside headings."
+      highlight: 1
+      default: 1
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool
+
     taxonomy_routes:
       type: array
       label: Taxonomy routes

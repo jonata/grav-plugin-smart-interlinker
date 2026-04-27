@@ -4,4 +4,5 @@ match_threshold: 0
 min_phrase_words: 2
 ignored_terms: []
 context_length: 80
+skip_headings: true
 taxonomy_routes: {}
