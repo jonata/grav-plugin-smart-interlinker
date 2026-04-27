@@ -261,15 +261,18 @@ class SmartInterlinkerPlugin extends Plugin
     {
         $index = $this->loadIndex();
         $threshold = (int)($this->config->get('plugins.smart-interlinker.match_threshold') ?? 70);
-        $minWords = max(1, (int)($this->config->get('plugins.smart-interlinker.min_phrase_words') ?? 2));
+        // Always generate phrases from 1 word up. The config min_phrase_words is exposed
+        // to the client as the default for the modal's "Phrase length" slider; the user
+        // can drag down to 1 to discover single-word matches without rebuilding anything.
+        $minWords = 1;
         $ignoredTerms = $this->normalizeTermList($this->config->get('plugins.smart-interlinker.ignored_terms') ?? []);
         $stopwords = $this->getStopwords();
 
         $sourceLc = mb_strtolower($this->stripMarkdown($sourceContent));
         $currentRouteNorm = $this->normalizeRoute($currentRoute);
 
-        // Step 1: per target, find the single best matching phrase
-        $bestPerTarget = []; // route => ['phrase'=>..., 'word_count'=>..., 'score'=>..., 'title'=>...]
+        // Step 1: per target, collect every matching phrase (with coverage score).
+        $matchesPerTarget = []; // route => ['title'=>..., 'phrases'=> [phrase => ['word_count'=>..., 'score'=>...]]]
 
         foreach ($index as $route => $entry) {
             if ($this->normalizeRoute($route) === $currentRouteNorm) continue;
@@ -290,6 +293,7 @@ class SmartInterlinkerPlugin extends Plugin
                 }
             }
 
+            $hits = [];
             foreach ($allPhrases as $phrase) {
                 if (!$this->phraseInSource($phrase, $sourceLc)) continue;
 
@@ -299,45 +303,56 @@ class SmartInterlinkerPlugin extends Plugin
 
                 if ($coverage < $threshold) continue;
 
-                $candidate = [
-                    'phrase' => $phrase,
-                    'word_count' => $phraseWords,
-                    'score' => $coverage,
-                    'title' => $entry['title'],
-                ];
+                $hits[$phrase] = ['word_count' => $phraseWords, 'score' => $coverage];
+            }
 
-                if (!isset($bestPerTarget[$route])) {
-                    $bestPerTarget[$route] = $candidate;
-                } else {
-                    $cur = $bestPerTarget[$route];
-                    if ($candidate['word_count'] > $cur['word_count']
-                        || ($candidate['word_count'] === $cur['word_count'] && $candidate['score'] > $cur['score'])) {
-                        $bestPerTarget[$route] = $candidate;
-                    }
-                }
+            if ($hits) {
+                $matchesPerTarget[$route] = ['title' => $entry['title'], 'phrases' => $hits];
             }
         }
 
-        // Step 2: group by phrase. If multiple targets share the same best phrase,
-        // they appear as alternatives in the same row.
-        $grouped = [];
-        foreach ($bestPerTarget as $route => $best) {
-            $key = mb_strtolower($best['phrase']);
-            if (!isset($grouped[$key])) {
-                $grouped[$key] = [
-                    'phrase' => $best['phrase'],
-                    'word_count' => $best['word_count'],
-                    'best_score' => $best['score'],
-                    'targets' => [],
-                ];
+        // Step 2: per target, drop phrases that are subsumed by a longer matching phrase
+        // (e.g. "Dolor Engine" subsumes "Dolor"); but unrelated short matches like
+        // "Software" and "QEMU" both survive — they suggest different anchor words.
+        foreach ($matchesPerTarget as $route => &$bucket) {
+            $phraseList = array_keys($bucket['phrases']);
+            $kept = [];
+            foreach ($phraseList as $p1) {
+                $isSubsumed = false;
+                foreach ($phraseList as $p2) {
+                    if ($p1 === $p2) continue;
+                    if ($this->phraseSubsumes($p1, $p2)) {
+                        $isSubsumed = true;
+                        break;
+                    }
+                }
+                if (!$isSubsumed) $kept[$p1] = $bucket['phrases'][$p1];
             }
-            $grouped[$key]['targets'][] = [
-                'url' => $route,
-                'title' => $best['title'],
-                'score' => $best['score'],
-            ];
-            if ($best['score'] > $grouped[$key]['best_score']) {
-                $grouped[$key]['best_score'] = $best['score'];
+            $bucket['phrases'] = $kept;
+        }
+        unset($bucket);
+
+        // Step 3: group by phrase. Same phrase across multiple targets shares one row.
+        $grouped = [];
+        foreach ($matchesPerTarget as $route => $bucket) {
+            foreach ($bucket['phrases'] as $phrase => $info) {
+                $key = mb_strtolower($phrase);
+                if (!isset($grouped[$key])) {
+                    $grouped[$key] = [
+                        'phrase' => $phrase,
+                        'word_count' => $info['word_count'],
+                        'best_score' => $info['score'],
+                        'targets' => [],
+                    ];
+                }
+                $grouped[$key]['targets'][] = [
+                    'url' => $route,
+                    'title' => $bucket['title'],
+                    'score' => $info['score'],
+                ];
+                if ($info['score'] > $grouped[$key]['best_score']) {
+                    $grouped[$key]['best_score'] = $info['score'];
+                }
             }
         }
 
@@ -353,16 +368,51 @@ class SmartInterlinkerPlugin extends Plugin
             return $b['best_score'] <=> $a['best_score'];
         });
 
-        return array_slice(array_values($grouped), 0, 30);
+        // Cap large enough to fit all reasonable result sets. The frontend filters by
+        // confidence + exact phrase length, so we don't want shorter matches to be cut
+        // off by a too-tight cap.
+        return array_slice(array_values($grouped), 0, 500);
     }
 
     private function getStopwords()
     {
         return [
-            'para', 'com', 'que', 'uma', 'por', 'dos', 'das', 'sobre', 'como', 'seus', 'suas', 'quando', 'onde', 'pelo', 'pela',
-            'este', 'esta', 'esse', 'essa', 'isto', 'isso', 'aquele', 'aquela', 'mais', 'menos', 'muito', 'muita', 'mesmo', 'mesma',
-            'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'been', 'were', 'will', 'would', 'could', 'should', 'their',
-            'there', 'which', 'what', 'when', 'where', 'your', 'some', 'other', 'about', 'into', 'than', 'then', 'them', 'they',
+            // Portuguese — articles
+            'o', 'a', 'os', 'as', 'um', 'uma', 'uns', 'umas',
+            // Portuguese — prepositions and contractions
+            'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
+            'ao', 'aos', 'à', 'às', 'pelo', 'pela', 'pelos', 'pelas',
+            'com', 'por', 'para', 'sem', 'sob', 'sobre', 'ante', 'após',
+            'até', 'contra', 'desde', 'entre', 'perante', 'segundo', 'trás',
+            'num', 'numa', 'nuns', 'numas', 'dum', 'duma', 'duns', 'dumas',
+            // Portuguese — conjunctions
+            'e', 'ou', 'mas', 'nem', 'porém', 'contudo', 'todavia', 'entretanto',
+            'logo', 'portanto', 'pois', 'porque', 'embora', 'conquanto', 'se',
+            // Portuguese — pronouns/determiners
+            'que', 'quem', 'qual', 'quais', 'cujo', 'cuja', 'cujos', 'cujas',
+            'este', 'esta', 'estes', 'estas', 'esse', 'essa', 'esses', 'essas',
+            'isto', 'isso', 'aquele', 'aquela', 'aqueles', 'aquelas', 'aquilo',
+            'meu', 'minha', 'meus', 'minhas', 'teu', 'tua', 'teus', 'tuas',
+            'seu', 'sua', 'seus', 'suas', 'nosso', 'nossa', 'nossos', 'nossas',
+            // Portuguese — common modifiers/adverbs/etc
+            'mais', 'menos', 'muito', 'muita', 'muitos', 'muitas',
+            'mesmo', 'mesma', 'mesmos', 'mesmas', 'tudo', 'todo', 'toda', 'todos', 'todas',
+            'também', 'já', 'ainda', 'agora', 'aqui', 'ali', 'lá', 'cá',
+            'como', 'quando', 'onde', 'aonde', 'quanto', 'quanta',
+            'foi', 'são', 'era', 'eram', 'estar', 'estar', 'ser', 'ter', 'haver',
+            // English — articles + common short prepositions/conjunctions/pronouns
+            'a', 'an', 'the', 'this', 'that', 'these', 'those',
+            'i', 'me', 'my', 'mine', 'we', 'us', 'our', 'ours',
+            'you', 'your', 'yours', 'he', 'she', 'it', 'its', 'his', 'her', 'hers', 'him',
+            'they', 'them', 'their', 'theirs',
+            'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'shall', 'might', 'must', 'may',
+            'in', 'on', 'at', 'by', 'to', 'of', 'for', 'from', 'with', 'about', 'into', 'onto', 'off', 'out',
+            'over', 'under', 'up', 'down', 'as', 'so', 'or', 'and', 'but', 'nor', 'not', 'no',
+            'than', 'then', 'than', 'too', 'very', 'just', 'only', 'also', 'such',
+            'who', 'whom', 'whose', 'which', 'what', 'when', 'where', 'why', 'how',
+            'some', 'any', 'all', 'each', 'every', 'most', 'more', 'less', 'few', 'many', 'much', 'other', 'another',
+            'there', 'here', 'one', 'two',
         ];
     }
 
@@ -409,6 +459,9 @@ class SmartInterlinkerPlugin extends Plugin
             for ($i = 0; $i + $n <= $count; $i++) {
                 $slice = array_slice($tokens, $i, $n);
                 if ($this->isAllFiltered($slice, $stopwords, $ignoredTerms)) continue;
+                // Skip 1-word phrases that contain no Unicode letter (e.g. pure version
+                // numbers like "5.18" or "40" — useless as standalone link anchors).
+                if ($n === 1 && !preg_match('/\p{L}/u', $slice[0])) continue;
                 $phrases[] = implode(' ', $slice);
             }
         }
@@ -429,10 +482,26 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function stripMarkdown($content)
     {
+        // Images: drop entirely
         $content = preg_replace('/!\[[^\]]*\]\([^\)]*\)/', ' ', $content);
-        $content = preg_replace('/\[([^\]]*)\]\([^\)]*\)/', '$1', $content);
+        // Markdown links: drop the entire [text](url) block — text inside an existing
+        // link should not be considered as a candidate for being linked again.
+        $content = preg_replace('/\[[^\]]*\]\([^\)]*\)/', ' ', $content);
+        // Reference-style markdown links: [text][ref]
+        $content = preg_replace('/\[[^\]]*\]\[[^\]]*\]/', ' ', $content);
+        // Auto-links: <https://example.com>
+        $content = preg_replace('/<https?:\/\/[^>]+>/i', ' ', $content);
+        // HTML anchors: <a ...>text</a>
+        $content = preg_replace('/<a\b[^>]*>.*?<\/a>/is', ' ', $content);
+        // Bare URLs: words inside a URL's path/query (e.g. /linux-kernel-5-18) should
+        // not be considered as candidate matches.
+        $content = preg_replace('/\bhttps?:\/\/[^\s<>()\[\]"\']+/i', ' ', $content);
+        $content = preg_replace('/\bwww\.[^\s<>()\[\]"\']+/i', ' ', $content);
+        // HTML comments
         $content = preg_replace('/<!--.*?-->/s', ' ', $content);
+        // Fenced code blocks
         $content = preg_replace('/```.*?```/s', ' ', $content);
+        // Inline code
         $content = preg_replace('/`[^`]*`/', ' ', $content);
         return $content;
     }
@@ -442,5 +511,19 @@ class SmartInterlinkerPlugin extends Plugin
         $phraseLc = mb_strtolower($phrase);
         $pattern = '/(?<![\p{L}\p{N}])' . preg_quote($phraseLc, '/') . '(?![\p{L}\p{N}])/u';
         return preg_match($pattern, $sourceLc) === 1;
+    }
+
+    /**
+     * True when $shorter appears as a contiguous word-boundary substring of $longer.
+     * Used to dedup overlapping matches per target ("Dolor" subsumed by "Dolor Engine").
+     */
+    private function phraseSubsumes($shorter, $longer)
+    {
+        $sLc = mb_strtolower($shorter);
+        $lLc = mb_strtolower($longer);
+        if ($sLc === $lLc) return false;
+        if (mb_strlen($sLc) >= mb_strlen($lLc)) return false;
+        $pattern = '/(?<![\p{L}\p{N}])' . preg_quote($sLc, '/') . '(?![\p{L}\p{N}])/u';
+        return preg_match($pattern, $lLc) === 1;
     }
 }

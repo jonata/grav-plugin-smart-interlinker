@@ -128,17 +128,52 @@
     }
 
     function buildContextSnippet(source, phrase, radius) {
-        if (!source || !phrase) return '';
+        if (!source || phrase === undefined || phrase === null) return '';
+        phrase = String(phrase);
+        if (!phrase) return '';
         radius = radius || 40;
-        const lcSource = source.toLowerCase();
-        const idx = lcSource.indexOf(phrase.toLowerCase());
-        if (idx === -1) return '';
-        const start = Math.max(0, idx - radius);
-        const end = Math.min(source.length, idx + phrase.length + radius);
-        const before = (start > 0 ? '…' : '') + source.substring(start, idx);
-        const matched = source.substring(idx, idx + phrase.length);
-        const after = source.substring(idx + phrase.length, end) + (end < source.length ? '…' : '');
-        return `<span class="ctx-before">${escapeHtml(before)}</span><span class="ctx-match">${escapeHtml(matched)}</span><span class="ctx-after">${escapeHtml(after)}</span>`;
+
+        // Build skip-zones: regions where a phrase occurrence should NOT be highlighted
+        // (markdown links, bare URLs, code, etc.) — matches the backend's stripMarkdown.
+        const skipZones = [];
+        const collectors = [
+            /!?\[[^\]]*\]\([^\)]*\)/g,         // markdown image/link
+            /\[[^\]]*\]\[[^\]]*\]/g,           // reference link
+            /<https?:\/\/[^>]+>/gi,            // autolink
+            /<a\b[^>]*>[\s\S]*?<\/a>/gi,       // HTML anchor
+            /\bhttps?:\/\/[^\s<>()\[\]"']+/gi, // bare URL
+            /\bwww\.[^\s<>()\[\]"']+/gi,       // bare www URL
+            /```[\s\S]*?```/g,                 // fenced code
+            /`[^`]*`/g,                        // inline code
+            /<!--[\s\S]*?-->/g,                // HTML comment
+        ];
+        for (const rx of collectors) {
+            let m;
+            while ((m = rx.exec(source)) !== null) skipZones.push([m.index, m.index + m[0].length]);
+        }
+        const inSkipZone = (pos) => skipZones.some(([s, e]) => pos >= s && pos < e);
+
+        // Find first occurrence with proper word boundaries AND outside skip-zones.
+        const isWordChar = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+        const phraseLc = phrase.toLowerCase();
+        const sourceLc = source.toLowerCase();
+
+        let searchFrom = 0;
+        while (true) {
+            const idx = sourceLc.indexOf(phraseLc, searchFrom);
+            if (idx === -1) return '';
+            const before = source[idx - 1];
+            const after = source[idx + phraseLc.length];
+            if (!isWordChar(before) && !isWordChar(after) && !inSkipZone(idx)) {
+                const start = Math.max(0, idx - radius);
+                const end = Math.min(source.length, idx + phrase.length + radius);
+                const beforeStr = (start > 0 ? '…' : '') + source.substring(start, idx);
+                const matched = source.substring(idx, idx + phrase.length);
+                const afterStr = source.substring(idx + phrase.length, end) + (end < source.length ? '…' : '');
+                return `<span class="ctx-before">${escapeHtml(beforeStr)}</span><span class="ctx-match">${escapeHtml(matched)}</span><span class="ctx-after">${escapeHtml(afterStr)}</span>`;
+            }
+            searchFrom = idx + 1;
+        }
     }
 
     function showModal(matches, editor, sourceContent) {
