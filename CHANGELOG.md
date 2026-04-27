@@ -1,3 +1,18 @@
+# v0.2.5
+## 2026-04-27
+
+1. [](#new)
+    * **Taxonomy targets.** Each unique `(key, value)` pair across the index becomes a virtual link target whose URL is built from a per-key template. Configure via the new `taxonomy_routes` setting (e.g. `distro: '/artigos/distro:{value}'`). Single-word taxonomy values bypass the modal's exact-phrase-length filter so they surface even when the slider is at 2+ words. Taxonomy suggestions get a small `tag` badge in the modal so editors can tell them apart from page suggestions.
+    * **`skip_headings` setting.** Toggle whether phrases inside Markdown headings (`#`, `##`, `###`...) and HTML `<h1>`–`<h6>` blocks are excluded from suggestions. Defaults to enabled (preserves v0.2.3 behavior); disable to receive suggestions for words that appear inside headings.
+    * **Show-more for long target lists.** Each suggestion's target list is capped at 10 visible options with a "Show N more" button. Cleans up noisy single-word matches that have hundreds of candidate pages.
+    * **Refresh after Accept.** When a link is inserted, the modal refetches suggestions so other matches that overlap the just-linked region disappear automatically. A spinner overlays the matches list during the refresh.
+2. [](#improved)
+    * `keyword_field` (single string) becomes `keyword_fields` (array). Admin field is now a selectize tag input with predefined options (`focus_keyword`, `keywords`, `seo_title`, `meta_title`, `aliases`, `tags`, `meta_description`) plus free-form add. Legacy single-string config is auto-migrated to array form on read.
+    * Indexer now uses Symfony YAML (when available) so nested taxonomy front-matter (`taxonomy: { distro: [...] }`) is parsed correctly.
+    * IIFE survives being inlined late by the asset pipeline — the editor-button observer starts immediately when `document.readyState !== 'loading'`.
+3. [](#bugfix)
+    * `insertLink` is now case-insensitive and word-boundary-aware. The wrapped text preserves the source's original casing. Fixes the `Phrase no longer found in content` error when the title-derived phrase had different casing than the source occurrence (e.g. *Kernel Linux 7.0* vs *kernel Linux 7.0*).
+
 # v0.2.3
 ## 2026-04-27
 
