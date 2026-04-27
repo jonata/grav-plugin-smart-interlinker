@@ -93,16 +93,27 @@
     }
 
     function deriveCurrentRoute() {
-        const fromInput = document.querySelector('input[name="route"]')?.value
-            || document.querySelector('input[name="data[route]"]')?.value;
-        if (fromInput) return fromInput.startsWith('/') ? fromInput : '/' + fromInput;
-
-        // Fall back to URL parsing: /admin/pages/<route>
+        // The URL is the only reliable source: /admin/pages/<route> always reflects the
+        // page being edited. The form has multiple data[route] inputs (parent, current,
+        // aliases) and querySelector picks the first one, which is usually the parent —
+        // so we don't trust it as the primary signal.
         const m = window.location.pathname.match(/\/admin\/pages\/(.+?)(?:\.json)?\/?$/);
         if (m && m[1]) {
             const slug = m[1].replace(/^\/+|\/+$/g, '');
             return '/' + slug;
         }
+
+        // Last-resort fallback: scan all data[route] inputs and pick the longest non-empty one
+        // (the deepest path is most likely to be the current page).
+        const candidates = Array.from(document.querySelectorAll('input[name="data[route]"], input[name="route"]'))
+            .map(i => (i.value || '').trim())
+            .filter(v => v && v !== '/');
+        if (candidates.length) {
+            candidates.sort((a, b) => b.length - a.length);
+            const v = candidates[0];
+            return v.startsWith('/') ? v : '/' + v;
+        }
+
         return '/';
     }
 
