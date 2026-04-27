@@ -166,28 +166,42 @@
 
         const cfgInit = window.SmartInterlinkerConfig || {};
         let threshold = Math.max(0, Math.min(100, parseInt(cfgInit.match_threshold) || 50));
-        const thresholdSlider = document.createElement('div');
-        thresholdSlider.className = 'smart-interlinker-threshold';
-        thresholdSlider.innerHTML = `
-            <label>Filter by confidence: <span id="threshold-value">${threshold}</span>%</label>
-            <input type="range" id="threshold-slider" min="0" max="100" value="${threshold}">
+        let minWords = Math.max(1, Math.min(6, parseInt(cfgInit.min_phrase_words) || 2));
+
+        const filters = document.createElement('div');
+        filters.className = 'smart-interlinker-filters';
+        filters.innerHTML = `
+            <div class="smart-interlinker-filter">
+                <label>Minimum confidence: <span id="sil-threshold-value">${threshold}</span>%</label>
+                <input type="range" id="sil-threshold-slider" min="0" max="100" value="${threshold}">
+            </div>
+            <div class="smart-interlinker-filter">
+                <label>Phrase length: <span id="sil-minwords-value">${minWords}</span> <span id="sil-minwords-unit">word${minWords === 1 ? '' : 's'}</span> exactly</label>
+                <input type="range" id="sil-minwords-slider" min="1" max="6" value="${minWords}">
+            </div>
         `;
 
-        const slider = thresholdSlider.querySelector('#threshold-slider');
-        slider.addEventListener('input', (e) => {
+        filters.querySelector('#sil-threshold-slider').addEventListener('input', (e) => {
             threshold = parseInt(e.target.value);
-            document.getElementById('threshold-value').textContent = threshold;
-            updateMatchesList(matches, matchesContainer, threshold, editor, sourceContent);
+            document.getElementById('sil-threshold-value').textContent = threshold;
+            updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
         });
 
-        list.appendChild(thresholdSlider);
+        filters.querySelector('#sil-minwords-slider').addEventListener('input', (e) => {
+            minWords = parseInt(e.target.value);
+            document.getElementById('sil-minwords-value').textContent = minWords;
+            document.getElementById('sil-minwords-unit').textContent = 'word' + (minWords === 1 ? '' : 's');
+            updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
+        });
+
+        list.appendChild(filters);
 
         const matchesContainer = document.createElement('div');
         matchesContainer.className = 'smart-interlinker-matches';
         matchesContainer.id = 'matches-container';
         list.appendChild(matchesContainer);
 
-        updateMatchesList(matches, matchesContainer, threshold, editor, sourceContent);
+        updateMatchesList(matches, matchesContainer, threshold, minWords, editor, sourceContent);
 
         content.appendChild(header);
         content.appendChild(list);
@@ -202,12 +216,12 @@
         });
     }
 
-    function updateMatchesList(groups, container, threshold, editor, sourceContent) {
-        const filtered = groups.filter(g => g.best_score >= threshold);
+    function updateMatchesList(groups, container, threshold, exactWords, editor, sourceContent) {
+        const filtered = groups.filter(g => g.best_score >= threshold && g.word_count === exactWords);
         container.innerHTML = '';
 
         if (filtered.length === 0) {
-            container.innerHTML = '<p class="no-matches">No matches at this confidence level</p>';
+            container.innerHTML = '<p class="no-matches">No matches with the current filters</p>';
             return;
         }
 
