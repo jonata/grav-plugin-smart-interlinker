@@ -154,8 +154,9 @@
                 /^[ \t]{0,3}#{1,6}[ \t]+.*$/gm,        // ATX heading line
                 /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi, // HTML heading
             ] : []),
-            /!?\[[^\]]*\]\([^\)]*\)/g,         // markdown image/link
-            /\[[^\]]*\]\[[^\]]*\]/g,           // reference link
+            // Innermost markdown image/link first — handles nested/broken patterns.
+            /!?\[[^\[\]]*\]\([^\)]*\)/g,       // markdown image/link
+            /\[[^\[\]]*\]\[[^\[\]]*\]/g,       // reference link
             /<https?:\/\/[^>]+>/gi,            // autolink
             /<a\b[^>]*>[\s\S]*?<\/a>/gi,       // HTML anchor
             /\bhttps?:\/\/[^\s<>()\[\]"']+/gi, // bare URL
@@ -167,6 +168,21 @@
         for (const rx of collectors) {
             let m;
             while ((m = rx.exec(source)) !== null) skipZones.push([m.index, m.index + m[0].length]);
+        }
+        // Also peel off outer wrappers around already-consumed inner links (e.g. a broken
+        // [[text](/x)](/y) becomes [ ](/y) after the inner is matched; we still want the
+        // remaining ](/y) range covered). Iteratively expand skip-zones to absorb any
+        // ](url) leftovers that follow an existing skip-zone.
+        const leftoverRx = /\]\([^\)]*\)/g;
+        let lm;
+        while ((lm = leftoverRx.exec(source)) !== null) {
+            const start = lm.index;
+            const end = lm.index + lm[0].length;
+            // Only count it as a leftover if the bracket pair was opened before the start
+            // by what we already consider a link skip-zone (or by an unmatched '[').
+            if (skipZones.some(([s, e]) => e === start) || source.charAt(start) === ']') {
+                skipZones.push([start, end]);
+            }
         }
         const inSkipZone = (pos) => skipZones.some(([s, e]) => pos >= s && pos < e);
 
@@ -312,16 +328,10 @@
     }
 
     function updateMatchesList(groups, container, threshold, exactWords, editor, sourceContent, onAccepted) {
-        // A group passes the confidence filter if its best_score is at or above threshold.
-        // It passes the phrase-length filter if either its word_count matches the slider
-        // OR it contains at least one taxonomy target — taxonomy targets bypass the
-        // exact-word filter so single-word values like "Ubuntu" surface even when the
-        // editor has the slider set to 2+.
-        const filtered = groups.filter(g => {
-            if (g.best_score < threshold) return false;
-            if (g.word_count === exactWords) return true;
-            return Array.isArray(g.targets) && g.targets.some(t => t.type === 'taxonomy');
-        });
+        // A group is shown when its best_score is at or above the threshold AND its
+        // matched-phrase word count matches the slider's exact length. The phrase-length
+        // filter is authoritative for every target type (page or taxonomy).
+        const filtered = groups.filter(g => g.best_score >= threshold && g.word_count === exactWords);
         container.innerHTML = '';
 
         if (filtered.length === 0) {

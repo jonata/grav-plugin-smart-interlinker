@@ -1,3 +1,12 @@
+# v0.2.6
+## 2026-04-28
+
+1. [](#bugfix)
+    * Markdown link stripping now handles nested or broken patterns iteratively. A source like `[[Kdenlive](/x)](/x)` (which can appear after a re-accepted suggestion) used to leave dangling `](/url)` fragments that re-introduced the inner phrase as a phantom token. The stripper now peels the innermost match first and repeats until clean. Same fix in the frontend context preview's skip-zones.
+    * The phrase-length slider is now authoritative for every target type. Previously taxonomy targets bypassed it (so single-word values surfaced even at slider=2+), which contradicted the user's intent. To see single-word taxonomy matches, drag the slider to 1.
+2. [](#improved)
+    * Taxonomy-routes admin help text uses `tag` as the example instead of the more specific `distro`.
+
 # v0.2.5
 ## 2026-04-27
 

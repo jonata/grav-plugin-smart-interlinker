@@ -634,13 +634,18 @@ class SmartInterlinkerPlugin extends Plugin
             // HTML headings: <h1>..</h1> through <h6>..</h6>
             $content = preg_replace('/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/i', ' ', $content);
         }
-        // Images: drop entirely
-        $content = preg_replace('/!\[[^\]]*\]\([^\)]*\)/', ' ', $content);
-        // Markdown links: drop the entire [text](url) block — text inside an existing
-        // link should not be considered as a candidate for being linked again.
-        $content = preg_replace('/\[[^\]]*\]\([^\)]*\)/', ' ', $content);
+        // Images and markdown links: strip innermost-first and iterate so nested or
+        // broken patterns like [[Kdenlive](/x)](/x) (which can result from a re-accepted
+        // suggestion) are fully removed instead of leaving leftover URL fragments behind.
+        $iterations = 0;
+        do {
+            $prev = $content;
+            $content = preg_replace('/!\[[^\[\]]*\]\([^\)]*\)/', ' ', $content);
+            $content = preg_replace('/\[[^\[\]]*\]\([^\)]*\)/', ' ', $content);
+            $iterations++;
+        } while ($prev !== $content && $iterations < 10);
         // Reference-style markdown links: [text][ref]
-        $content = preg_replace('/\[[^\]]*\]\[[^\]]*\]/', ' ', $content);
+        $content = preg_replace('/\[[^\[\]]*\]\[[^\[\]]*\]/', ' ', $content);
         // Auto-links: <https://example.com>
         $content = preg_replace('/<https?:\/\/[^>]+>/i', ' ', $content);
         // HTML anchors: <a ...>text</a>

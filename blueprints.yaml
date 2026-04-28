@@ -1,7 +1,7 @@
 name: Smart Interlinker
 slug: smart-interlinker
 type: plugin
-version: 0.2.5
+version: 0.2.6
 description: SEO-driven internal linking assistant for the Grav page editor. Discover and insert internal links by reviewing scored, grouped phrase suggestions with surrounding context.
 icon: sitemap
 author:
@@ -101,6 +101,6 @@ form:
       type: array
       label: Taxonomy routes
       help: |
-        Map taxonomy keys (left) to URL templates (right) to surface taxonomy listings as link suggestions. Use {value} as the placeholder for the taxonomy value (URL-encoded automatically). Example — distro → /artigos/distro:{value} produces /artigos/distro:Ubuntu when an article tagged distro: Ubuntu is found.
-      placeholder_key: 'taxonomy key (e.g. distro)'
+        Map taxonomy keys (left) to URL templates (right) to surface taxonomy listings as link suggestions. Use {value} as the placeholder for the taxonomy value (URL-encoded automatically). Example — tag → /tags/{value} produces /tags/Ubuntu when an article tagged tag: Ubuntu is found.
+      placeholder_key: 'taxonomy key (e.g. tag)'
       placeholder_value: 'URL template with {value}'
