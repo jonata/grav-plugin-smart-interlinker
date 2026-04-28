@@ -138,14 +138,17 @@
         return null;
     }
 
-    function buildContextSnippet(source, phrase, radius) {
-        if (!source || phrase === undefined || phrase === null) return '';
+    /**
+     * Returns the index in `source` of the first word-bounded occurrence of `phrase`
+     * that is NOT inside a skip-zone (markdown link, URL, heading, code, etc.), or -1
+     * if no such occurrence exists. Used by both the context preview and insertLink so
+     * the displayed location and the actually-replaced location are guaranteed to match.
+     */
+    function findFreeOccurrence(source, phrase) {
+        if (!source || phrase === undefined || phrase === null) return -1;
         phrase = String(phrase);
-        if (!phrase) return '';
-        radius = radius || 40;
+        if (!phrase) return -1;
 
-        // Build skip-zones: regions where a phrase occurrence should NOT be highlighted
-        // (markdown links, bare URLs, code, etc.) — matches the backend's stripMarkdown.
         const skipZones = [];
         const cfg = window.SmartInterlinkerConfig || {};
         const skipHeadings = cfg.skip_headings !== false;
@@ -154,8 +157,7 @@
                 /^[ \t]{0,3}#{1,6}[ \t]+.*$/gm,        // ATX heading line
                 /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi, // HTML heading
             ] : []),
-            // Innermost markdown image/link first — handles nested/broken patterns.
-            /!?\[[^\[\]]*\]\([^\)]*\)/g,       // markdown image/link
+            /!?\[[^\[\]]*\]\([^\)]*\)/g,       // markdown image/link (innermost)
             /\[[^\[\]]*\]\[[^\[\]]*\]/g,       // reference link
             /<https?:\/\/[^>]+>/gi,            // autolink
             /<a\b[^>]*>[\s\S]*?<\/a>/gi,       // HTML anchor
@@ -169,24 +171,17 @@
             let m;
             while ((m = rx.exec(source)) !== null) skipZones.push([m.index, m.index + m[0].length]);
         }
-        // Also peel off outer wrappers around already-consumed inner links (e.g. a broken
-        // [[text](/x)](/y) becomes [ ](/y) after the inner is matched; we still want the
-        // remaining ](/y) range covered). Iteratively expand skip-zones to absorb any
-        // ](url) leftovers that follow an existing skip-zone.
+        // Pick up dangling ](url) fragments that sit right after a stripped link.
         const leftoverRx = /\]\([^\)]*\)/g;
         let lm;
         while ((lm = leftoverRx.exec(source)) !== null) {
             const start = lm.index;
             const end = lm.index + lm[0].length;
-            // Only count it as a leftover if the bracket pair was opened before the start
-            // by what we already consider a link skip-zone (or by an unmatched '[').
             if (skipZones.some(([s, e]) => e === start) || source.charAt(start) === ']') {
                 skipZones.push([start, end]);
             }
         }
         const inSkipZone = (pos) => skipZones.some(([s, e]) => pos >= s && pos < e);
-
-        // Find first occurrence with proper word boundaries AND outside skip-zones.
         const isWordChar = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
         const phraseLc = phrase.toLowerCase();
         const sourceLc = source.toLowerCase();
@@ -194,19 +189,25 @@
         let searchFrom = 0;
         while (true) {
             const idx = sourceLc.indexOf(phraseLc, searchFrom);
-            if (idx === -1) return '';
+            if (idx === -1) return -1;
             const before = source[idx - 1];
             const after = source[idx + phraseLc.length];
-            if (!isWordChar(before) && !isWordChar(after) && !inSkipZone(idx)) {
-                const start = Math.max(0, idx - radius);
-                const end = Math.min(source.length, idx + phrase.length + radius);
-                const beforeStr = (start > 0 ? '…' : '') + source.substring(start, idx);
-                const matched = source.substring(idx, idx + phrase.length);
-                const afterStr = source.substring(idx + phrase.length, end) + (end < source.length ? '…' : '');
-                return `<span class="ctx-before">${escapeHtml(beforeStr)}</span><span class="ctx-match">${escapeHtml(matched)}</span><span class="ctx-after">${escapeHtml(afterStr)}</span>`;
-            }
+            if (!isWordChar(before) && !isWordChar(after) && !inSkipZone(idx)) return idx;
             searchFrom = idx + 1;
         }
+    }
+
+    function buildContextSnippet(source, phrase, radius) {
+        const idx = findFreeOccurrence(source, phrase);
+        if (idx === -1) return '';
+        radius = radius || 40;
+        const phraseStr = String(phrase);
+        const start = Math.max(0, idx - radius);
+        const end = Math.min(source.length, idx + phraseStr.length + radius);
+        const beforeStr = (start > 0 ? '…' : '') + source.substring(start, idx);
+        const matched = source.substring(idx, idx + phraseStr.length);
+        const afterStr = source.substring(idx + phraseStr.length, end) + (end < source.length ? '…' : '');
+        return `<span class="ctx-before">${escapeHtml(beforeStr)}</span><span class="ctx-match">${escapeHtml(matched)}</span><span class="ctx-after">${escapeHtml(afterStr)}</span>`;
     }
 
     function showModal(initialMatches, editor, initialSource) {
@@ -331,7 +332,15 @@
         // A group is shown when its best_score is at or above the threshold AND its
         // matched-phrase word count matches the slider's exact length. The phrase-length
         // filter is authoritative for every target type (page or taxonomy).
-        const filtered = groups.filter(g => g.best_score >= threshold && g.word_count === exactWords);
+        const cfg = window.SmartInterlinkerConfig || {};
+        const ctxLen = cfg.context_length || 80;
+        const filtered = groups
+            .filter(g => g.best_score >= threshold && g.word_count === exactWords)
+            // Drop groups whose phrase has no plain-text occurrence the user can see —
+            // every match is inside a skip-zone (markdown link, URL, heading, code...).
+            // Without a context preview the suggestion is misleading.
+            .map(g => ({...g, _context: buildContextSnippet(sourceContent, g.phrase, ctxLen)}))
+            .filter(g => g._context !== '');
         container.innerHTML = '';
 
         if (filtered.length === 0) {
@@ -363,10 +372,9 @@
                 ? `<button type="button" class="match-show-more">Show ${totalTargets - initialLimit} more</button>`
                 : '';
 
-            const cfg = window.SmartInterlinkerConfig || {};
-            const context = buildContextSnippet(sourceContent, group.phrase, cfg.context_length || 80);
+            const context = group._context;
             item.innerHTML = `
-                ${context ? `<div class="match-context">${context}</div>` : ''}
+                <div class="match-context">${context}</div>
                 <div class="match-target-list">${targetsHtml}${showMoreHtml}</div>
                 <div class="match-actions">
                     <div class="match-meta">
@@ -421,27 +429,29 @@
     }
 
     function insertLink(editor, phrase, url) {
-        const escaped = escapeRegex(phrase);
-        // Case-insensitive + word-bounded so we match the same occurrence the backend
-        // found, regardless of casing differences between the title-derived phrase and
-        // the source text. Wrap the actually-matched text (preserving its original
-        // case) in the markdown link so the editor's content keeps its capitalization.
-        const regex = new RegExp('(?<![\\p{L}\\p{N}])' + escaped + '(?![\\p{L}\\p{N}])', 'iu');
-        const wrap = (m) => `[${m}](${url})`;
+        // Use the same skip-zone-aware lookup as the context preview so the replacement
+        // happens at the exact occurrence the user saw highlighted, not at the first
+        // lexical match (which could be inside an existing markdown link).
+        const getContent = () => editor.type === 'codemirror' ? editor.cm.getValue() : editor.el.value;
+        const setContent = (v) => {
+            if (editor.type === 'codemirror') {
+                editor.cm.getDoc().setValue(v);
+            } else {
+                editor.el.value = v;
+                editor.el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        };
 
-        if (editor.type === 'codemirror') {
-            const doc = editor.cm.getDoc();
-            const content = doc.getValue();
-            if (!regex.test(content)) return false;
-            doc.setValue(content.replace(regex, wrap));
-            return true;
-        } else {
-            const content = editor.el.value;
-            if (!regex.test(content)) return false;
-            editor.el.value = content.replace(regex, wrap);
-            editor.el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-        }
+        const content = getContent();
+        const idx = findFreeOccurrence(content, phrase);
+        if (idx === -1) return false;
+
+        const phraseStr = String(phrase);
+        const matchedText = content.substring(idx, idx + phraseStr.length);
+        const wrapped = `[${matchedText}](${url})`;
+        const next = content.substring(0, idx) + wrapped + content.substring(idx + phraseStr.length);
+        setContent(next);
+        return true;
     }
 
     function escapeHtml(text) {

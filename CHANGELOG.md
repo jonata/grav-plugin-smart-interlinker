@@ -1,3 +1,10 @@
+# v0.2.7
+## 2026-04-28
+
+1. [](#bugfix)
+    * Accepting a suggestion now replaces the *exact occurrence shown in the context preview*, not the first lexical match. Previously, when a phrase appeared inside an existing markdown link AND outside it, accepting wrapped the first hit — which was usually the one inside the link — producing nested broken patterns like `[[Fedora Linux 44](/x)](/y)`. The replacement now uses an index from the same skip-zone-aware lookup the preview uses, so the displayed and replaced positions are guaranteed to match.
+    * Suggestions whose phrase has no plain-text occurrence the user can see (every match is inside a markdown link, URL, heading, or code block) are no longer rendered in the modal at all. Avoids "empty" suggestion rows that have no context above them.
+
 # v0.2.6
 ## 2026-04-28
 
