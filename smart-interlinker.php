@@ -4,7 +4,7 @@ namespace Grav\Plugin;
 
 use Composer\Autoload\ClassLoader;
 use Grav\Common\Plugin;
-use RocketThemes\Toolbox\Event\Event;
+use RocketTheme\Toolbox\Event\Event;
 
 class SmartInterlinkerPlugin extends Plugin
 {
@@ -568,6 +568,10 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function tokenizeForPhrases($text)
     {
+        // Coerce to string up front: front-matter values reach here (titles, keyword
+        // fields, taxonomy values) and may be non-strings (numbers, null). PHP 8.1+
+        // deprecates passing null to string params like preg_replace()'s subject.
+        $text = (string)$text;
         // Preserve dots, hyphens, and underscores so version numbers like "6.1.4" stay intact;
         // strip everything else (sentence punctuation, brackets, etc.) into spaces.
         $text = preg_replace('/[^\p{L}\p{N}\.\-_\s]+/u', ' ', $text);
@@ -624,6 +628,7 @@ class SmartInterlinkerPlugin extends Plugin
 
     private function stripMarkdown($content)
     {
+        $content = (string)$content;
         if ($this->shouldSkipHeadings()) {
             // Markdown ATX headings (# H1 ... ###### H6): strip the whole line. Headings
             // are structural and the editor's own labels — suggestions inside them are
@@ -660,7 +665,9 @@ class SmartInterlinkerPlugin extends Plugin
         $content = preg_replace('/```.*?```/s', ' ', $content);
         // Inline code
         $content = preg_replace('/`[^`]*`/', ' ', $content);
-        return $content;
+        // preg_replace() returns null on a PCRE runtime error (e.g. backtrack limit on
+        // pathological input); coalesce so the caller's mb_strtolower() never sees null.
+        return $content ?? '';
     }
 
     /**

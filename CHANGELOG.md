@@ -1,3 +1,13 @@
+# v0.2.8
+## 2026-06-23
+
+1. [](#new)
+    * **Grav 2.0 compatibility.** Added a `compatibility` block to `blueprints.yaml` declaring the plugin as tested against Grav `1.7` and `2.0`, so GPM and the Grav 2.0 migration tool recognize it as 2.0-ready. The plugin still only *requires* Grav ≥ 1.7, so it keeps working on 1.7/1.8 sites. Grav 2.0's plugin architecture, event system, blueprints, and core form fields are unchanged, so no behavioral changes were needed.
+2. [](#improved)
+    * Hardened the text-processing helpers (`tokenizeForPhrases`, `stripMarkdown`) against PHP 8.1+ "passing null to a string parameter" deprecations under Grav 2.0's PHP 8.3+ baseline — non-string front-matter values and PCRE runtime errors are now coerced/coalesced instead of propagating `null`.
+3. [](#bugfix)
+    * Fixed the `onPageSave` / `onPageDelete` event handlers, which imported the misspelled `RocketThemes\Toolbox\Event\Event` class (the package namespace is `RocketTheme`, singular). The wrong type hint threw a `TypeError` every time a page was saved or deleted, silently breaking incremental index updates (the index was only rebuilt lazily on the next analysis). Incremental save/delete indexing now works.
+
 # v0.2.7
 ## 2026-04-28
 

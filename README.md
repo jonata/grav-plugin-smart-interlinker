@@ -1,7 +1,7 @@
 # Smart Interlinker — Grav Admin Plugin
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Grav 1.7+](https://img.shields.io/badge/Grav-1.7%2B-brown.svg)](https://getgrav.org)
+[![Grav 1.7+ | 2.0](https://img.shields.io/badge/Grav-1.7%2B%20%7C%202.0%20ready-brown.svg)](https://getgrav.org)
 
 SEO-driven internal linking for the Grav page editor. Scans your draft content for phrases that match other published pages on the site, then lets you insert one-click internal links from a review modal.
 
@@ -51,8 +51,9 @@ Admin → Plugins → Smart Interlinker exposes all settings graphically.
 
 ## Requirements
 
-- Grav ≥ 1.7
+- Grav ≥ 1.7 — tested against and compatible with **Grav 1.7, 1.8, and 2.0**
 - Admin plugin ≥ 1.10
+- PHP ≥ 7.4 on Grav 1.7/1.8; **PHP ≥ 8.3** on Grav 2.0
 
 ## Configuration
 
