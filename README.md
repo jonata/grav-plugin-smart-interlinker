@@ -52,8 +52,16 @@ Admin → Plugins → Smart Interlinker exposes all settings graphically.
 ## Requirements
 
 - Grav ≥ 1.7 — tested against and compatible with **Grav 1.7, 1.8, and 2.0**
-- Admin plugin ≥ 1.10
 - PHP ≥ 7.4 on Grav 1.7/1.8; **PHP ≥ 8.3** on Grav 2.0
+- **Classic admin (Grav 1.7/1.8):** Admin plugin ≥ 1.10
+- **Admin Next (Grav 2.0):** the **API** and **Admin2** plugins (installed by default on any Grav 2.0 Admin Next site) — no extra setup needed
+
+### How it integrates
+
+The same plugin build supports both admins:
+
+- **Classic admin** injects a toolbar button + review modal via the page editor's assets.
+- **Admin Next** (Grav 2.0's SvelteKit SPA) registers a **context panel** — the "Internal Links" button appears in the page-editor toolbar and opens a slide-in panel with the same scored suggestions. It reads the live draft and inserts links through Admin Next's editor event bridge, so it works with both the CodeMirror markdown editor and editor-pro.
 
 ## Configuration
 

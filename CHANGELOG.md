@@ -1,3 +1,18 @@
+# v0.3.0
+## 2026-06-24
+
+1. [](#new)
+    * **Grav 2.0 Admin Next support.** The plugin now works in Grav 2.0's new SvelteKit admin (Admin Next), where the classic Twig/CodeMirror-5 editor — and the plugin's old asset-injection + toolbar-button approach — no longer exist. The integration was rebuilt against Admin Next's official extension points:
+        * A **context panel** registered via `onApiContextPanels` adds the "Internal Links" button to the page-editor toolbar and hosts the suggestions UI in a slide-in side panel (`admin-next/panels/smart-interlinker.js`, a hand-written web component).
+        * A REST endpoint `POST /api/v1/smart-interlinker/analyze` (registered via `onApiRegisterRoutes`, served by `classes/Api/AnalyzeController.php`) returns suggestions for the live draft.
+        * The panel reads the live, unsaved editor content and inserts links through Admin Next's editor event bridge (`grav:editor:get-content` / `grav:editor:insert-content`), so it works with both the CodeMirror markdown editor and editor-pro.
+    * The classic-admin integration (Grav 1.7/1.8) is unchanged and still ships alongside, so a single plugin build supports both admins. The indexing and phrase-matching engine is shared between the two paths via a new public `analyze()` method.
+2. [](#improved)
+    * Indexing/matching config (`context_length`, `match_threshold`, `min_phrase_words`, `skip_headings`) is now produced from a single `getClientConfig()` source consumed by both the classic injected `window.SmartInterlinkerConfig` and the Admin Next panel (returned in the analyze response).
+    * Admin Next panel: the confidence and phrase-length sliders are seeded from config only on the first scan, then preserved across re-scans — so the automatic refresh after an **Accept** no longer resets the filters to their defaults.
+3. [](#note)
+    * Admin Next integration requires the **Grav API** and **Admin2** plugins (present on any Grav 2.0 Admin Next site). On Grav 1.7/1.8 the `onApi*` hooks never fire, so there is no new dependency for classic installs.
+
 # v0.2.8
 ## 2026-06-23
 

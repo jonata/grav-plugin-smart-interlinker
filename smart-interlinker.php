@@ -20,13 +20,35 @@ class SmartInterlinkerPlugin extends Plugin
             'onTwigSiteVariables' => ['onTwigSiteVariables', 0],
             'onTask.smart-interlinker.analyze' => ['taskAnalyze', 0],
             'onTask.smart-interlinker.rebuild' => ['taskRebuildIndex', 0],
+            // Grav 2.0 Admin Next (the SvelteKit SPA admin, backed by the API plugin).
+            // These events only fire when the API plugin is installed, so they are
+            // inert on classic-admin / Grav 1.7 installs.
+            'onApiContextPanels' => ['onApiContextPanels', 0],
+            'onApiRegisterRoutes' => ['onApiRegisterRoutes', 0],
         ];
+    }
+
+    /**
+     * Register PSR-4 autoloading for the plugin's classes/ directory. Grav calls
+     * this when the plugin is loaded, before any event fires, so the Admin Next
+     * API controller resolves on demand. Composer's ClassLoader ships with Grav.
+     */
+    public function autoload(): ClassLoader
+    {
+        $loader = new ClassLoader();
+        $loader->addPsr4('Grav\\Plugin\\SmartInterlinker\\', __DIR__ . '/classes');
+        $loader->register();
+        return $loader;
     }
 
     public function onPluginsInitialized()
     {
         $this->cachePath = $this->grav['locator']->findResource('plugin://smart-interlinker/cache', true, true);
         $this->indexFile = $this->cachePath . '/interlinks-index.json';
+        // Expose this instance so the Admin Next API controller (a separate class
+        // constructed by the API plugin) can delegate analysis back to the plugin
+        // without duplicating the indexing/matching engine.
+        $this->grav['smart-interlinker'] = $this;
     }
 
     public function onPageSave(Event $e)
@@ -45,20 +67,84 @@ class SmartInterlinkerPlugin extends Plugin
         $this->removeFromIndex($page->route());
     }
 
+    /**
+     * Classic admin (Grav 1.7/1.8) asset injection. Admin Next (Grav 2.0) renders no
+     * Twig admin pages, so this never runs there — the Admin Next path uses the context
+     * panel + API endpoint registered in onApiContextPanels()/onApiRegisterRoutes().
+     */
     public function onTwigSiteVariables()
     {
         if ($this->isAdmin() && isset($this->grav['admin']) && $this->grav['admin']->location === 'pages') {
-            $config = $this->config->get('plugins.smart-interlinker', []);
-            $clientConfig = [
-                'context_length' => (int)($config['context_length'] ?? 80),
-                'match_threshold' => (int)($config['match_threshold'] ?? 70),
-                'min_phrase_words' => (int)($config['min_phrase_words'] ?? 2),
-                'skip_headings' => $this->shouldSkipHeadings(),
-            ];
-            $this->grav['assets']->addInlineJs('window.SmartInterlinkerConfig = ' . json_encode($clientConfig) . ';');
+            $this->grav['assets']->addInlineJs('window.SmartInterlinkerConfig = ' . json_encode($this->getClientConfig()) . ';');
             $this->grav['assets']->addJs('plugin://smart-interlinker/assets/smart-interlinker.js');
             $this->grav['assets']->addCss('plugin://smart-interlinker/assets/smart-interlinker.css');
         }
+    }
+
+    /**
+     * Client-side settings consumed by both the classic admin JS (via injected
+     * window.SmartInterlinkerConfig) and the Admin Next panel (via the analyze
+     * response). Keep the two surfaces in sync from a single source.
+     */
+    private function getClientConfig(): array
+    {
+        $config = $this->config->get('plugins.smart-interlinker', []);
+        return [
+            'context_length' => (int)($config['context_length'] ?? 80),
+            'match_threshold' => (int)($config['match_threshold'] ?? 70),
+            'min_phrase_words' => (int)($config['min_phrase_words'] ?? 2),
+            'skip_headings' => $this->shouldSkipHeadings(),
+        ];
+    }
+
+    /**
+     * Run a full analysis pass for the given draft content and current route.
+     * Shared entry point for the classic onTask handler and the Admin Next API
+     * controller. Lazily builds the index on first use.
+     */
+    public function analyze(string $content, string $route): array
+    {
+        if (empty($this->loadIndex())) {
+            $this->buildFullIndex();
+        }
+        return [
+            'matches' => $this->findInternalLinks($content, $route),
+            'index_size' => count($this->loadIndex()),
+            'config' => $this->getClientConfig(),
+        ];
+    }
+
+    /**
+     * Grav 2.0 Admin Next: register the editor-toolbar button + slide-in panel for
+     * the page editor. The button and panel chrome are provided by Admin Next; the
+     * panel content is the web component at admin-next/panels/smart-interlinker.js.
+     */
+    public function onApiContextPanels(Event $event)
+    {
+        if (!$this->config->get('plugins.smart-interlinker.enabled', true)) {
+            return;
+        }
+        $panels = $event['panels'] ?? [];
+        $panels[] = [
+            'id'       => 'smart-interlinker',
+            'plugin'   => 'smart-interlinker',
+            'label'    => 'Internal Link Suggestions',
+            'icon'     => 'waypoints', // Lucide icon name (Admin Next uses lucide-svelte)
+            'contexts' => ['pages'],
+            'priority' => 10,
+            'width'    => 560,
+        ];
+        $event['panels'] = $panels;
+    }
+
+    /**
+     * Grav 2.0 Admin Next: register the REST endpoint the panel calls to fetch
+     * suggestions. Backed by AnalyzeController, which delegates to analyze().
+     */
+    public function onApiRegisterRoutes(Event $event)
+    {
+        $routes = $event['routes'];
+        $routes->post('/smart-interlinker/analyze', [\Grav\Plugin\SmartInterlinker\Api\AnalyzeController::class, 'analyze']);
     }
 
     /**
@@ -293,17 +379,10 @@ class SmartInterlinkerPlugin extends Plugin
 
     public function taskAnalyze()
     {
-        $content = $_POST['content'] ?? '';
-        $currentRoute = $_POST['route'] ?? '';
-
-        if (empty($this->loadIndex())) {
-            $this->buildFullIndex();
-        }
-
-        $matches = $this->findInternalLinks($content, $currentRoute);
+        $result = $this->analyze((string)($_POST['content'] ?? ''), (string)($_POST['route'] ?? ''));
 
         header('Content-Type: application/json');
-        echo json_encode(['matches' => $matches, 'index_size' => count($this->loadIndex())]);
+        echo json_encode($result);
         exit;
     }
 
