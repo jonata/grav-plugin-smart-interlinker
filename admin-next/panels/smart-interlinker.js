@@ -111,12 +111,32 @@
         });
     }
 
-    // Replace the whole editor document. 'replace' routes through Svelte state +
-    // auto-save, mirroring the classic plugin's "set full content" behavior.
-    function replaceEditorContent(fullContent) {
+    // Write the new body into the MAIN content editor ONLY.
+    //
+    // The global 'grav:editor:insert-content' event is received by EVERY markdown
+    // editor mounted on the page — including blueprint fields such as a "description"
+    // markdown field — so broadcasting it on a multi-editor page clobbers the others
+    // (the article body ends up dumped into the description field). Instead we locate
+    // the CodeMirror 6 view whose document currently equals the body we read and
+    // dispatch a change to that view alone. The editor exposes its view on the
+    // `.cm-editor` element as `__cmView`; dispatching fires its update listener, which
+    // propagates back through Svelte state + auto-save just like a manual edit.
+    function writeMainContent(oldContent, newContent) {
+        const editors = document.querySelectorAll('.cm-editor');
+        for (const el of editors) {
+            const view = el.__cmView;
+            if (view && view.state.doc.toString() === oldContent) {
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newContent } });
+                return true;
+            }
+        }
+        // Fallback only when no CodeMirror view matches (e.g. an editor-pro/TipTap
+        // body, which has no `.cm-editor`): use the global event. On such a page this
+        // is the documented mechanism and there is no ambiguous second CM editor.
         window.dispatchEvent(new CustomEvent('grav:editor:insert-content', {
-            detail: { content: fullContent, mode: 'replace' },
+            detail: { content: newContent, mode: 'replace' },
         }));
+        return true;
     }
 
     // --------------------------------------------------------- web component
@@ -218,7 +238,7 @@
             const matchedText = content.substring(idx, idx + phraseStr.length);
             const wrapped = `[${matchedText}](${url})`;
             const next = content.substring(0, idx) + wrapped + content.substring(idx + phraseStr.length);
-            replaceEditorContent(next);
+            writeMainContent(content, next);
             this._sourceContent = next;
             return true;
         }

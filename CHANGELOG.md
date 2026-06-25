@@ -1,3 +1,9 @@
+# v0.3.1
+## 2026-06-24
+
+1. [](#bugfix)
+    * Admin Next panel: **Accept** now inserts the link only into the article body. On pages with more than one Markdown editor (e.g. a `description` field), the new body was written through the global `grav:editor:insert-content` event — which *every* Markdown editor on the page listens to — so the article body was also dumped into the description field. The panel now dispatches the change directly to the CodeMirror view that holds the body (matched by content), leaving other editors untouched.
+
 # v0.3.0
 ## 2026-06-24
 
